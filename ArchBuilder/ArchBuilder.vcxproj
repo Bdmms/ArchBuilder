@@ -150,6 +150,7 @@
     <ClInclude Include="DisplayAdapter.h" />
     <ClInclude Include="InstructionSet.h" />
     <ClInclude Include="MemoryMap.h" />
+    <ClInclude Include="MIDI.h" />
     <ClInclude Include="Processor.h" />
   </ItemGroup>
   <ItemGroup>

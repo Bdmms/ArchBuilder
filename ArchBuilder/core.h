@@ -7,6 +7,9 @@
 #include <iostream>
 #include <fstream>
 
+#define REu16(X) (((X & 0xFF00) >> 8) | ((X & 0xFF) << 8))
+#define REu32(X) (((X & 0xFF000000) >> 24) | ((X & 0xFF0000) >> 8) | ((X & 0xFF00) << 8) | ((X & 0xFF) << 24))
+
 typedef unsigned long u64;
 typedef unsigned int u32;
 typedef unsigned short u16;

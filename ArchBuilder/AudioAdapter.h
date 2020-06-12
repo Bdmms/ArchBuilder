@@ -3,13 +3,15 @@
 #ifndef AUDIO_ADAPTER_H
 #define AUDIO_ADAPTER_H
 
+//#define MIDI_READOUT
+
 #include <SFML/Audio.hpp>
 #include "core.h"
+#include "MIDI.h"
 
 constexpr u32 SAMPLE_CHUNK_SIZE = 441000;
 constexpr u32 A4 = 440; // frequency of the cycle (cycle / sec)
 constexpr u32 CD_SAMPLE_RATE = 441000; // sample rate (samples / sec) : 44.1 KHz = CD Quality
-constexpr u32 A4t = CD_SAMPLE_RATE / A4; // # of samples per cycle (samples / cycle)
 
 constexpr float BASE_FREQ = 1.0595f;
 
@@ -35,15 +37,17 @@ constexpr float BASE_FREQ = 1.0595f;
 #define C8 88
 #define C9 90
 
-class WaveGenerator
+class SoundChannel
 {
 	float (*wave)(const float);
 	float sample_offset;
+	float frequency;
+	bool enabled;
 
 public:
-	WaveGenerator(float (*func)(const float)) : wave(func), sample_offset(0.0f) {}
+	SoundChannel(float (*func)(const float)) : wave(func), sample_offset(0.0f), frequency(0.0f), enabled(false) {}
 
-	inline short getSample(const u32& len, const short vol)
+	inline short getSample(const float& len, const short vol)
 	{
 		short sample = (short)(vol * wave(sample_offset));
 		sample_offset += 1.0f / len;
@@ -51,7 +55,7 @@ public:
 		return sample;
 	}
 
-	inline void fillSamples(short* samples, const u32 chunk_size, const u32& len, const short vol)
+	inline void fillSamples(short* samples, const u32 chunk_size, const float& len, const short vol)
 	{
 		float inv_len = 1.0f / len;
 		for (u32 i = 0; i < chunk_size; i++)
@@ -66,143 +70,152 @@ public:
 struct SeqEvent
 {
 	u64 tick;
-	u32 length;
+	u64 endTick;
+	//u32 length;
 	u16 volume;
 	u8 tone;
 };
 
-struct Sequence
+struct Track
 {
 private:
-	std::vector<SeqEvent> sequence;
+	std::vector<SeqEvent> track;
 public:
+	Track() {}
+	Track(MidiTrack* t, double samples_per_tick)
+	{
+		MidiTrack& trk = *t;
+		for (u32 i = 0; i < trk.size(); i++)
+		{
+			MidiEvent& ev = trk[i];
+			if ((ev.message[0] & 0xF0) == 0x90)
+			{
+				SeqEvent event;
+				event.tick = (u64)(ev.tick * samples_per_tick);
+				event.tone = ev.message[1];
+				event.volume = ev.message[2] << 4;
+				event.endTick = (u64)(MidiSystem::nextEndTick(trk, i + 1, ev.message[0] & 0xF, event.tone) * samples_per_tick);
+				track.push_back(event);
+			}
+		}
+	}
+
 	void addEvent(float t, float len, u16 vol, u8 tone)
 	{
 		SeqEvent seq;
 		seq.tick = (u64)(t * CD_SAMPLE_RATE);
-		seq.length = (u32)(len * CD_SAMPLE_RATE);
+		seq.endTick = seq.tick + (u32)(len * CD_SAMPLE_RATE);
 		seq.volume = vol;
 		seq.tone = tone;
-		sequence.push_back(seq);
+		track.push_back(seq);
 	}
 
-	u32 size() const { return sequence.size(); }
-	SeqEvent& at(const u32& i) { return sequence[i]; }
+	u32 size() const { return track.size(); }
+	SeqEvent& at(const u32& i) { return track[i]; }
+};
+
+struct TrackBuilder : public Track
+{
+	float marker = 0.0f;
+	void pushEvent(float len, u16 vol, u8 tone)
+	{
+		addEvent(marker, len, vol, tone);
+		marker += len;
+	}
+};
+
+class TrackSequencer
+{
+	SoundChannel* sound;
+	Track* track;
+	u32 eventID;
+	u16 lastSample;
+	bool enabled = true;
+public:
+	TrackSequencer() : sound(nullptr), track(nullptr), eventID(0), lastSample(0) { }
+	TrackSequencer(SoundChannel* s, Track* seq) : sound(s), track(seq), eventID(0), lastSample(0) { }
+	inline short nextSample(const u64& tick);
+	inline bool atEnd() { return eventID >= track->size();}
+	inline void reset() { eventID = 0; }
+	inline void toggleEnable() { enabled = !enabled; }
 };
 
 class Sequencer
 {
-	WaveGenerator* sound;
-	Sequence* sequence;
-	short* samples;
-	u16 freq_table[128];
+	std::vector<TrackSequencer> sequencers;
 	u64 sequence_offset;
-	u32 eventID;
-
 public:
-	Sequencer(WaveGenerator* s, Sequence* seq) : sound(s), sequence(seq), eventID(0), sequence_offset(0)
-	{
-		samples = new short[SAMPLE_CHUNK_SIZE];
+	Sequencer() : sequence_offset(0) {}
+	Sequencer(MidiSequence seq);
 
-		for (int i = 0; i < 128; i++)
-		{
-			float frequency = pow(BASE_FREQ, i - 49) * 440.0f;
-			freq_table[i] = (u16)(CD_SAMPLE_RATE / frequency);
-		}
-	}
-	~Sequencer() { delete[] samples; }
-
+	inline void addSequencer(SoundChannel*& s, Track*& seq) { sequencers.push_back(TrackSequencer(s, seq)); }
 	inline short nextSample()
 	{
-		if (eventID >= sequence->size()) return 0;
-
-		SeqEvent& nextEvent = sequence->at(eventID);
-		short sample = sequence_offset < nextEvent.tick ? 0 : sound->getSample(freq_table[nextEvent.tone], nextEvent.volume);
-
+		short sample = 0;
+		for (u32 s = 0; s < sequencers.size(); s++)
+			sample += sequencers[s].nextSample(sequence_offset);
 		sequence_offset++;
-		while (nextEvent.tick + nextEvent.length <= sequence_offset)
-		{
-			eventID++;
-			if (eventID >= sequence->size()) return sample;
-			nextEvent = sequence->at(eventID);
-		}
-
 		return sample;
 	}
 
-	inline short* nextChunk()
+	inline void toggleEnable(u32 t) 
+	{ 
+		if (t < sequencers.size()) 
+		{
+			sequencers[t].toggleEnable();
+			std::cout << "CHANNEL " << t << " TOGGLED" << std::endl;
+		}
+	}
+
+	inline bool isEnded()
 	{
-		if (eventID >= sequence->size())
-		{
-			for (u32 i = 0; i < SAMPLE_CHUNK_SIZE; i++)
-				samples[i] = 0;
-			return samples;
-		}
+		bool ended = 1;
+		for (u32 s = 0; s < sequencers.size(); s++)
+			ended &= sequencers[s].atEnd();
+		return ended;
+	}
 
-		SeqEvent& nextEvent = sequence->at(eventID);
-		u32 chunk_offset = 0;
-		u32 chunk_remain = SAMPLE_CHUNK_SIZE;
-		u64 end_point = sequence_offset + SAMPLE_CHUNK_SIZE; // Ending sample of current chunk
-
-		// Attempts to fill all samples before returning
-		while (chunk_remain > 0)
-		{
-			// Fill in Gap Time (until next event)
-			if (sequence_offset < nextEvent.tick)
-			{
-				u64 gapSize = nextEvent.tick - sequence_offset > chunk_remain ? chunk_remain : nextEvent.tick - sequence_offset;
-				for (u64 i = 0; i < gapSize; i++) samples[chunk_offset + i] = 0;
-				chunk_remain -= gapSize;
-				chunk_offset = SAMPLE_CHUNK_SIZE - chunk_remain;
-				sequence_offset += gapSize;
-			}
-
-			// Calculate the size of data to fill in
-			u32 event_length = nextEvent.tick + nextEvent.length - sequence_offset;
-			u32 chunk_size = event_length > chunk_remain ? chunk_remain : event_length;
-			sound->fillSamples(samples + chunk_offset, chunk_size, freq_table[nextEvent.tone], nextEvent.volume);
-			chunk_remain -= chunk_size;
-			chunk_offset = SAMPLE_CHUNK_SIZE - chunk_remain;
-
-			// Move to the next value in the sequence
-			sequence_offset += chunk_size;
-			while (nextEvent.tick + nextEvent.length <= sequence_offset)
-			{
-				eventID++;
-
-				if (eventID >= sequence->size())
-				{
-					sequence_offset = end_point;
-					for (u32 i = chunk_offset; i < SAMPLE_CHUNK_SIZE; i++)
-						samples[i] = 0;
-					return samples;
-				}
-
-				nextEvent = sequence->at(eventID);
-			}
-		}
-
-		sequence_offset = end_point;
-		return samples;
+	inline void reset()
+	{
+		sequence_offset = 0;
+		for (u32 s = 0; s < sequencers.size(); s++)
+			sequencers[s].reset();
 	}
 };
 
 class ARCAudioStream : public sf::SoundStream
 {
 private:
-	Sequencer* sequencer;
+	Sequencer sequencer;
+	short* buffer;
 
 public:
-	static void test();
+	static void playFrom(const char* filename);
 
-	ARCAudioStream(Sequencer* s) : sequencer(s)
+	ARCAudioStream()
 	{ 
+		buffer = new short[SAMPLE_CHUNK_SIZE];
 		initialize(1, CD_SAMPLE_RATE);
 	}
+	ARCAudioStream(MidiSequence seq) : sequencer(seq)
+	{
+		buffer = new short[SAMPLE_CHUNK_SIZE];
+		initialize(1, CD_SAMPLE_RATE);
+	}
+	~ARCAudioStream() { delete[] buffer; }
+
+	inline Sequencer& getSequencer() { return sequencer; }
+	inline void addSequence(SoundChannel* s, Track* seq) { sequencer.addSequencer(s, seq); }
 
 	virtual bool onGetData(Chunk& data)
 	{
-		data.samples = sequencer->nextChunk(); // ptr to sample chunk
+		if (sequencer.isEnded())
+			sequencer.reset();
+
+		for (u32 i = 0; i < SAMPLE_CHUNK_SIZE; i++)
+			buffer[i] = sequencer.nextSample();
+
+		data.samples = buffer;
 		data.sampleCount = SAMPLE_CHUNK_SIZE; // size of chunk in samples
 		return true;
 	}

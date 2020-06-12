@@ -6,8 +6,8 @@
 
 int main(int argc, char* argv[])
 {
-	ARCAudioStream::test();
-	return -1;
+	ARCAudioStream::playFrom("AUDIO\\SND_BGM_M_DUNGEON_HONOU_02.mid");
+	return 404;
 
 	ARM7TDMI p1(60); // 60 ns ~= 16.8 MHz
 	MemoryMap map(28); // 28-bit address space
