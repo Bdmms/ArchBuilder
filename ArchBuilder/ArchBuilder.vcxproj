@@ -103,6 +103,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>C:\SFML-2.5.1\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -146,19 +147,25 @@
   <ItemGroup>
     <ClInclude Include="ARM7.h" />
     <ClInclude Include="AudioAdapter.h" />
+    <ClInclude Include="AudioSequencer.h" />
     <ClInclude Include="core.h" />
     <ClInclude Include="DisplayAdapter.h" />
     <ClInclude Include="InstructionSet.h" />
+    <ClInclude Include="LinkedList.h" />
     <ClInclude Include="MemoryMap.h" />
     <ClInclude Include="MIDI.h" />
+    <ClInclude Include="AudioChannel.h" />
     <ClInclude Include="Processor.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioAdapter.cpp" />
+    <ClCompile Include="AudioChannel.cpp" />
+    <ClCompile Include="AudioSequencer.cpp" />
     <ClCompile Include="core.cpp" />
     <ClCompile Include="DisplayAdapter.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="ARM7.cpp" />
+    <ClCompile Include="MIDI.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -17,20 +17,6 @@ protected:
 	unsigned int num_reg;
 	unsigned long clock_time;
 
-	// Helper for converting to hex
-	char* toHex(unsigned int x) {
-		char* hex = new char[3 + (long)(bits >> 2)];
-		hex[0] = '0';
-		hex[1] = 'x';
-		for (unsigned char i = 0, bi = bits - 4; i < bits >> 2; i++, bi -= 4)
-		{
-			char l = (x >> bi) & 0xF;
-			hex[2 + i] = l < 10 ? ('0' + l) : ('A' + l - 10);
-		}
-		hex[2 + (bits >> 2)] = '\0';
-		return hex;
-	}
-
 	// Helper for removing characters from strings
 	void remove(std::string& s, char c)
 	{
@@ -116,8 +102,8 @@ public:
 
 	inline void printDescription() 
 	{
-		char* opMsk = toHex(instructions->getOpCodeMask());
-		char* sfMsk = toHex(instructions->getSuffixMask());
+		const char* opMsk = arc::toHex(instructions->getOpCodeMask(), bits);
+		const char* sfMsk = arc::toHex(instructions->getSuffixMask(), bits);
 		std::cout << "--- " << getName() << " ---\n";
 		std::cout << "   ARCHITECTURE: " << instructions->getName() << " (" << (int)bits << "-bit)" << std::endl;
 		std::cout << "PROCESSOR SPEED: " << 1.0f / ((double)clock_time / 1000) << " MHz\n";
@@ -125,8 +111,6 @@ public:
 		std::cout << "NUM INSTRCTIONS: " << instructions->size() << std::endl;
 		std::cout << "    OPCODE MASK: " << opMsk << std::endl;
 		std::cout << "COND FIELD MASK: " << sfMsk << std::endl;
-		delete[] opMsk;
-		delete[] sfMsk;
 	}
 
 	virtual const char* getName() = 0;

@@ -131,7 +131,7 @@ void ARM7TDMI::interpret(std::string line)
 
 	// OTHER ACTIONS
 	case PRINT: 
-		std::cout << toHex(*Rd) << std::endl; return;
+		std::cout << arc::toHex(*Rd, bits) << std::endl; return; // Changed to arc may have caused errors
 		//if(parsed.size() > 2)* Rd += *Rm; // POST-FIX
 		return;
 

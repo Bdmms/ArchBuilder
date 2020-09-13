@@ -1,129 +1,192 @@
 #include "AudioAdapter.h"
 #include <cmath>
+#include <SFML/Graphics.hpp>
 
-constexpr float PI = 3.141592654f;
-constexpr float PI2 = PI * 2;
+constexpr const char* FILE_LOCATION_AUDIO = "AUDIO\\";
+constexpr const char* FILE_LOCATION_SOUNDBANK = "AUDIO\\soundsf2\\";
+constexpr const char* FILE_EXTENSION_MID = ".mid";
+constexpr const char* FILE_EXTENSION_SF2 = ".sf2";
 
-float FREQ_TABLE[128];
+void showOscilloscope(ARCAudioStream& stream, const u32& buffer_size);
 
-float noise(const float pos) { return (float) rand() / 0xFFFF; }
-float squareWave(const float pos) { return pos < 0.5f ? 1.0f : 0.0f; }
-float triangleWave(const float pos) { return pos < 0.5f ? pos * 2 : -pos * 2; }
-float sawtoothWave(const float pos) { return pos - floorf(pos); }
-float sineWave(const float pos) { return sin(pos * PI2); }
-float kickSquareWave(const float pos) { return (pos < 0.5f ? sin(pos * PI2 * 0.5f) - 1.0f : cos(pos * PI2 * 0.5f) + 1.0f); }
 
-float tanWave(const float pos) 
-{ 
-	float w = tan(pos * PI2);
-	if (w > 1.0f) return 1.0f;
-	else if (w < -1.0f) return -1.0f;
-	else return w;
-}
-
-float compWave0(const float pos) 
-{ 
-	//float w = 0;
-	//for (int i = 1; i < 10; i++)
-	//	w += sineWave(pos * i * 2);
-	//return w / 6;
-	return 0.0f;
-}
-
-float compWave1(const float pos)
+inline void playStream(ARCAudioStream& stream, const u32& buffer_size, const bool& oscilloscope)
 {
-	float w = 0;
-	for (int i = 1; i < 10; i++)
-		w += triangleWave(pos * i) * sineWave(pos * i * 2);
-	return w / 30;
-}
-
-float fluteWave(const float pos)
-{
-	if (pos < 0.5f) return -sin(pos * PI2);
-	return 0.5f * sin(pos * PI2 * 2.0f);
-}
-
-const u32 smp_sz = 512;
-float* wave_sample = new float[smp_sz];
-float sampleWave(const float pos) { return wave_sample[(u32)(pos * smp_sz) & 0x1FF]; }
-
-void ARCAudioStream::playFrom(const char* filename)
-{
-	// Setup Frequency table
-	for (int i = 0; i < 128; i++)
-	{
-		double frequency = pow(2, (float)(i - 49) / 12) * 440.0;
-		FREQ_TABLE[i] = (float) CD_SAMPLE_RATE / frequency;
-	}
-
-	MidiSequence seq(filename);
-	ARCAudioStream stream(seq);
-	
 	stream.play();
 
-	char input = '0';
-	while (input != 'q')
+	if (oscilloscope)
+		showOscilloscope(stream, buffer_size);
+	else
 	{
-		std::cin >> input;
-		if (input >= '0' && input <= '9')
-			stream.getSequencer().toggleEnable(input - '0');
-		if (input >= 'a' && input <= 'f')
-			stream.getSequencer().toggleEnable(input - 'a' + 10);
+		char quit;
+		std::cin >> quit;
 	}
 
 	stream.stop();
+
+	while (stream.getStatus() == ARCAudioStream::Playing)
+		sf::sleep(sf::seconds(0.1f));
 }
 
-Sequencer::Sequencer(MidiSequence seq) : sequence_offset(0)
+void ARCAudioStream::playToChannels(SoundChannel** channels, const char* filename, const bool& oscilloscope, Soundfont* sf2)
 {
-	double sec_per_tick;
+	const char* midArr[3] = { FILE_LOCATION_AUDIO, filename, FILE_EXTENSION_MID };
+	const char* mid_filename = arc::concat(midArr, 3);
+	MidiSequence seq(mid_filename);
 
-	if (seq.time_division & 0x8000) // frames per second
+	if (!seq.isValid()) return;
+
+	u32 buffer_size = CD_SAMPLE_RATE / 60;
+	ARCAudioStream stream(channels, buffer_size * 2, MIDI_NUM_CHANNELS); // chunk size and num of channels
+	stream.getSequencer().load(seq);
+
+	if (sf2 != nullptr)
+		stream.getSequencer().apply(sf2->getSoundbank());
+
+	playStream(stream, buffer_size, oscilloscope);
+}
+
+void ARCAudioStream::playFrom(const char* filename, const bool& sampled, const bool& oscilloscope)
+{
+	SoundChannel* channels[MIDI_NUM_CHANNELS];
+	for (u8 i = 0; i < MIDI_NUM_CHANNELS; i++)
+		channels[i] = new Oscillator(squareWave);
+	
+	const char* midArr[3] = { FILE_LOCATION_AUDIO, filename, FILE_EXTENSION_MID };
+	const char* mid_filename = arc::concat(midArr, 3);
+	MidiSequence seq(mid_filename);
+
+	u32 buffer_size = CD_SAMPLE_RATE / 60;
+	ARCAudioStream stream(channels, buffer_size * 2, MIDI_NUM_CHANNELS); // chunk size and num of channels
+	stream.getSequencer().load(seq);
+
+	if (sampled)
 	{
-		u32 PPQ = (int)((seq.time_division & 0x7F00) >> 8) * (int)(seq.time_division & 0xFF);
-		sec_per_tick = 1000000.0 / (double)(PPQ);
+		const char* sf2Arr[3] = { FILE_LOCATION_SOUNDBANK, filename, FILE_EXTENSION_SF2 };
+		const char* sf2_filename = arc::concat(sf2Arr, 3);
+		Soundfont soundfont(sf2_filename);
+
+		if (!soundfont.isValid()) return;
+		stream.getSequencer().apply(soundfont.getSoundbank());
 	}
-	else // ticks per beat
-		sec_per_tick = (double) MidiSystem::findTempo(seq) / (double)(seq.time_division & 0x7FFF);
 
-	sec_per_tick = sec_per_tick / 1000000.0 * CD_SAMPLE_RATE;
-	std::cout << "MODE: " << (seq.time_division & 0x8000) << std::endl;
-	std::cout << sec_per_tick << " samples / tick" << std::endl;
+	playStream(stream, buffer_size, oscilloscope);
 
-	for (u32 i = 0; i < seq.size; i++)
+	// Release the heap
+	for (u8 i = 0; i < 16; i++)
+		delete channels[i];
+}
+
+void drawBuffer(const sample* buffer, const u32& buffer_size, u32* frame, const u32 width, const u32 height, const u32& scanline)
+{
+	u32 half_height = (height >> 1);
+	u32 curr_sample = half_height - (int)(half_height * buffer[0]);
+
+	for (u32 x = 1; x < width; x++)
 	{
-		if(i >= 6)
-			sequencers.push_back(TrackSequencer(new SoundChannel(noise), new Track(&seq.tracks[i], sec_per_tick * 0.4)));
+		u32 next_sample = half_height - (int)(half_height * buffer[(u32)((float)x / width * buffer_size)]);
+		frame[x + curr_sample * scanline] = 0xFFFFFFFF;
+
+		if (curr_sample < next_sample)
+			for (u32 y = curr_sample; y < next_sample && y < height; y++)
+				frame[x + y * scanline] = 0xFFFFFFFF;
 		else
-			sequencers.push_back(TrackSequencer(new SoundChannel(squareWave), new Track(&seq.tracks[i], sec_per_tick * 0.4)));
+			for (u32 y = next_sample; y < curr_sample && y < height; y++)
+				frame[x + y * scanline] = 0xFFFFFFFF;
+
+		curr_sample = next_sample;
 	}
 }
 
-short TrackSequencer::nextSample(const u64& tick)
+inline void showOscilloscope(ARCAudioStream& stream, const u32& buffer_size)
 {
-	if (!enabled || eventID >= track->size())
-		return 0;
+	u32 div_width = 300;
+	u32 div_height = 150;
+	u32 frame_width = div_width * 4;
+	u32 frame_height = div_height * 4;
+	u32 frame_size = (frame_width * frame_height);
+	u32* frame = new u32[frame_size];
+	bool key_pressed[16] = { false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,false };
+	sf::RenderWindow window(sf::VideoMode(frame_width, frame_height), "GBA Synthesizer");
+	sf::Texture texture;
+	texture.create(frame_width, frame_height);
+	sf::Sprite sprite(texture);
+	sf::Event event;
+	bool exit = false;
+	u8 channel = 0;
+	u8 octave = C5;
 
-	SeqEvent& nextEvent = track->at(eventID);
-	while (eventID + 1 < track->size() && tick >= track->at(eventID + 1).tick)
+	window.setActive(true);
+	window.setVerticalSyncEnabled(true);
+	window.setFramerateLimit(60);
+
+	while (!exit)
 	{
-		eventID++;
-		if (eventID >= track->size()) return lastSample;
-		nextEvent = track->at(eventID);
+		for (u32 i = 0; i < frame_size; i++) frame[i] = 0xFF000000;
+
+		while (window.pollEvent(event))
+		{
+			switch (event.type)
+			{
+			case sf::Event::Closed: window.close(); break;
+			case sf::Event::KeyPressed:
+				if (event.key.code >= sf::Keyboard::Num0 && event.key.code <= sf::Keyboard::Num9 || event.key.code == sf::Keyboard::Z)
+				{
+					u8 key = (event.key.code - sf::Keyboard::Num0) & 0xF;
+					if (key_pressed[key])
+						break;
+
+					key_pressed[key] = true;
+					MidiEvent ev;
+					ev.size = 3;
+					ev.message = new u8[ev.size];
+					ev.message[MESSAGE_STATUS] = STATUS_CHANNEL_ON | channel;
+					ev.message[MESSAGE_TONE] = octave + key;
+					ev.message[MESSAGE_VOLUME] = 100;
+					stream.getSequencer().handleEvent(ev);
+					delete[] ev.message;
+				}
+				else if (event.key.code == sf::Keyboard::Up)  octave = (octave + 12) & 0x7F;
+				else if (event.key.code == sf::Keyboard::Down) octave = (octave - 12) & 0x7F;
+				else if (event.key.code == sf::Keyboard::Left)  channel = (channel - 1) & 0x0F;
+				else if (event.key.code == sf::Keyboard::Right) channel = (channel + 1) & 0x0F;
+				else if (event.key.code == sf::Keyboard::P)		stream.getSequencer().paused = !stream.getSequencer().paused;
+				else if (event.key.code == sf::Keyboard::S)		stream.getSequencer().skip( 1000 );
+				exit = event.key.code == sf::Keyboard::Q;
+				break;
+			case sf::Event::KeyReleased:
+				if (event.key.code >= sf::Keyboard::Num0 && event.key.code <= sf::Keyboard::Num9 || event.key.code == sf::Keyboard::Z)
+					key_pressed[(event.key.code - sf::Keyboard::Num0) & 0xF] = false;
+				key_pressed[15] = false;
+
+				for (u32 i = 0; i < 11; i++)
+					if (key_pressed[i])
+						key_pressed[15] = true;
+
+				if (key_pressed[15])
+					break;
+
+				MidiEvent ev;
+				ev.size = 3;
+				ev.message = new u8[ev.size];
+				ev.message[MESSAGE_STATUS] = STATUS_CHANNEL_OFF | channel;
+				ev.message[MESSAGE_TONE] = octave + event.key.code - sf::Keyboard::Num0;
+				ev.message[MESSAGE_VOLUME] = 0;
+				stream.getSequencer().handleEvent(ev);
+				delete[] ev.message;
+				break;
+			}
+		}
+
+		for (u32 i = 0; i < MIDI_NUM_CHANNELS; i++)
+		{
+			u32 offset = div_width * (i % 4) + div_height * frame_width * (i / 4);
+			drawBuffer(stream.getChannelBuffer(i), buffer_size, frame + offset, div_width, div_height, frame_width);
+		}
+
+		texture.update((sf::Uint8*)frame);
+		window.draw(sprite);
+		window.display();
 	}
-
-	lastSample = tick < nextEvent.tick ? 0 : sound->getSample(FREQ_TABLE[nextEvent.tone], nextEvent.volume);
-	if (nextEvent.endTick <= tick)
-		eventID++;
-
-	/*
-	while (nextEvent.tick + nextEvent.length <= tick)
-	{
-		eventID++;
-		if (eventID >= track->size()) return lastSample;
-		nextEvent = track->at(eventID);
-	}*/
-
-	return lastSample;
+	delete[] frame;
 }

@@ -30,7 +30,7 @@ public:
 			if ((sz & 0xFFFFFFFE) && (sz & 1))
 				sub_mem = true;
 
-		mask = arc::pow(2, bits) - 1; // Determines mask applied to the memory
+		mask = arc::ipow(2, bits) - 1; // Determines mask applied to the memory
 		cs_mask = ~mask;
 		cs = address & cs_mask; // Determines mask applied to the memory
 	}
@@ -129,7 +129,7 @@ public:
 	MemoryMap(unsigned int b) : bits(b)
 	{
 		defmem = new unsigned char;
-		size = arc::pow(2, b);
+		size = arc::ipow(2, b);
 		address_mask = size - 1;
 	}
 
@@ -160,9 +160,7 @@ public:
 			for (size_t j = sz; j < 14; j++)
 				std::cout << " ";
 
-			char* addr = arc::toHex(map[i]->getAddress(), bits);
-			std::cout << "|  " << addr << "  |  " << std::dec;
-			delete[] addr;
+			std::cout << "|  " << arc::toHex(map[i]->getAddress(), bits) << "  |  " << std::dec;
 
 			if (map[i]->getCapacity() >= 1048576)
 				std::cout << (map[i]->getCapacity() / 1048576) << " MB";

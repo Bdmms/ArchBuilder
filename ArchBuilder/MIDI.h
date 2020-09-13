@@ -5,6 +5,66 @@
 
 #include "core.h"
 
+constexpr u8 MESSAGE_STATUS = 0;
+constexpr u8 MESSAGE_TONE = 1;
+constexpr u8 MESSAGE_VOLUME = 2;
+
+constexpr float CENT = 1.000577790f;
+constexpr float CENTIBEL = 1.011579454f;
+constexpr float DECIBEL = 1.122018454f;
+constexpr float TIMECENT = 1.000577790f;
+
+const float HALFSCALE	= pow(2.0f, 6.0f / 12.0f) - 1.0f;
+const float QUADTONE	= pow(2.0f, 4.0f / 12.0f) - 1.0f;
+const float TRITONE		= pow(2.0f, 3.0f / 12.0f) - 1.0f;
+const float DUALTONE	= pow(2.0f, 2.0f / 12.0f) - 1.0f;
+const float FULLTONE	= pow(2.0f, 1.0f / 12.0f) - 1.0f;
+const float SEMITONE	= pow(2.0f, 0.5f / 12.0f) - 1.0f;
+
+constexpr u8 MIDI_NUM_CHANNELS = 16;
+constexpr u32 NUM_CHUNK_IDS = 24;
+
+// SF2 Chunk IDs
+const u32 SF2_CHUNK_IDS[NUM_CHUNK_IDS] = {
+	// Required
+	arc::ID("LIST"), arc::ID("ifil"), arc::ID("isng"), arc::ID("INAM"), arc::ID("ICRD"), arc::ID("ISFT"), arc::ID("smpl"), arc::ID("phdr"),
+	arc::ID("pbag"), arc::ID("pmod"), arc::ID("pgen"), arc::ID("inst"), arc::ID("ibag"), arc::ID("imod"), arc::ID("igen"), arc::ID("shdr"),
+
+	// Optional
+	arc::ID("irom"), arc::ID("iver"), arc::ID("IENG"), arc::ID("IPRD"), arc::ID("ICOP"), arc::ID("ICMT"), arc::ID("ISFT"), arc::ID("sm24")
+};
+
+// Generator operation IDs
+enum Generator
+{
+	GEN_START_ADDRESS_OFFSET = 0,
+	GEN_REVERB = 16,
+	GEN_PAN = 17,
+	GEN_ATTACK_VOL_ENVELOPE = 34,
+	GEN_HOLD_VOL_ENVELOPE = 35,
+	GEN_DECAY_VOL_ENVELOPE = 36,
+	GEN_SUSTAIN_VOL_ENVELOPE = 37,
+	GEN_RELEASE_VOL_ENVELOPE = 38,
+	GEN_INSTRUMENT = 41,
+	GEN_KEY_RANGE = 43,
+	GEN_VELOCITY_RANGE = 44,
+	GEN_INITIAL_ATTENUATION = 48,
+	GEN_SAMPLE_ID = 53,
+	GEN_SAMPLE_MODE = 54,
+	GEN_OVERRIDE_ROOT_KEY = 58
+};
+
+// A readable file
+class ARCFile
+{
+protected:
+	bool valid = false;
+	virtual bool load(const char*) = 0;
+public:
+	constexpr bool isValid() const { return valid; }
+};
+
+// A chunk found within a .mid file
 struct MidiChunk
 {
 	u32 id;
@@ -14,222 +74,260 @@ struct MidiChunk
 	~MidiChunk() { if (buffer != nullptr) delete[] buffer; }
 };
 
-struct MidiFile
+// An object that contains the .mid file data
+class MidiFile : public ARCFile
 {
+	bool load(const char* path) override;
+
+public:
 	u32 id;
 	u32 header_size;
 	u16 format_type;
 	u16 num_tracks;
 	u16 time_division;
 	MidiChunk* chunks;
-	bool valid;
 
-	MidiFile(const char* path) : chunks(nullptr), id(0), header_size(6), format_type(0), num_tracks(0), time_division(0), valid(false)
+	MidiFile(const char* path) : chunks(nullptr), id(0), header_size(6), format_type(0), num_tracks(0), time_division(0)
 	{
-		std::cout << "\nLOADING " << path << std::endl;
-		std::ifstream stream;
-		stream.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-
-		try
-		{
-			stream.open(path, std::ios::in | std::ios::binary);
-
-			// Header Chunk
-			stream.read((char*)this, 14);
-			header_size = REu32(header_size);
-			format_type = REu16(format_type);
-			num_tracks = REu16(num_tracks);
-			time_division = REu16(time_division);
-			if (id != 0x6468544D) throw "Invalid Header ID";
-			if (header_size != 6) throw "Invalid Header Size";
-			std::cout << "   NUM TRACKS = " << num_tracks << std::endl;
-			std::cout << "  FORMAT TYPE = " << format_type << std::endl;
-			std::cout << "TIME DIVISION = " << time_division << std::endl;
-
-			// Track Chunks
-			chunks = new MidiChunk[num_tracks];
-			for (u16 i = 0; i < num_tracks; i++)
-			{
-				stream.read((char*)(chunks + i), 8);
-				chunks[i].size = REu32(chunks[i].size);
-				if (chunks[i].id != 0x6B72544D) throw "Invalid Chunk ID";
-
-				chunks[i].buffer = new u8[chunks[i].size];
-				stream.read((char*)(chunks[i].buffer), chunks[i].size);
-				std::cout << "TRACK " << i  << " (" << chunks[i].size << " BYTES)\n";
-			}
-
-			stream.close();
-			valid = true;
-		}
-		catch (const char* err) { std::cout << "Error - " << err << std::endl; }
-		catch (std::ifstream::failure e) { std::cout << path << " cannot be read!\n"; }
+		valid = load(path);
 	}
-
-	~MidiFile()
-	{
-		if(chunks == nullptr) delete[] chunks;
-	}
+	~MidiFile() { if(chunks == nullptr) delete[] chunks; }
 };
 
+// The structure of a midi event
 struct MidiEvent
 {
 	u64 tick;
 	u32 size;
 	u8* message;
+
+	inline void print(const u32 id) const;
 };
 
+// The list of midi events
 typedef std::vector<MidiEvent> MidiTrack;
 
-struct MidiSequence
+// The sequence for processing midi events
+class MidiSequence : public ARCFile
 {
-	MidiTrack* tracks = nullptr;
-	u32 size = 0;
-	u16 time_division = 120;
+	bool addNextEvent(u8*& data, const u8* data_end, MidiTrack& track, u64& tick);
+	bool convertToTrack(const MidiChunk& chunk, MidiTrack& track);
+	bool load(const char* filepath) override;
 
-	MidiSequence() {}
-	MidiSequence(const char* filepath) { load(filepath); }
+public:
+	const MidiFile midi;
+	u32 size;
+	u16 time_division;
+	MidiTrack* tracks;
 
-	inline void load(const char* filepath)
+	MidiSequence(const char* filepath) : midi(filepath), tracks(nullptr)
 	{
-		MidiFile midi(filepath);
-
-		if (!midi.valid || tracks != nullptr) return;
 		size = midi.num_tracks;
 		time_division = midi.time_division;
-		tracks = new MidiTrack[size];
-
-		for (u16 i = 0; i < size; i++)
-		{
-#ifdef MIDI_READOUT
-			std::cout << "--- TRACK " << i << " ---\n";
-#endif
-
-			MidiChunk& chunk = midi.chunks[i];
-			MidiTrack& track = tracks[i];
-			u64 tick = 0;
-			u32 num_events = 0;
-
-			u32 b = 0;
-			while (b < chunk.size)
-			{
-				MidiEvent ev;
-
-				// 0-6 = value, 7 = byte extension
-				u32 delta_time = chunk.buffer[b] & 0x7F;
-				while (chunk.buffer[b++] & 0x80)
-				{
-					delta_time = delta_time << 7;
-					delta_time += chunk.buffer[b] & 0x7F;
-				}
-
-				tick += delta_time;
-				ev.tick = tick;
-				u8 event_type = chunk.buffer[b++];
-
-				if (event_type == 0xFF) // Meta Event
-				{
-					u8 type = chunk.buffer[b++];
-					u8 length = chunk.buffer[b++];
-					ev.size = length + 3;
-					ev.message = new u8[ev.size];
-					ev.message[0] = event_type;
-					ev.message[1] = type;
-					ev.message[2] = length;
-					for (u32 param = 0; param < length && b < chunk.size; param++)
-						ev.message[3 + param] = chunk.buffer[b++];
-				}
-				else if (event_type == 0xF0) // SysEx Event
-				{
-					u8 length = chunk.buffer[b++];
-					ev.size = length + 2;
-					ev.message = new u8[ev.size];
-					ev.message[0] = event_type;
-					ev.message[1] = length;
-					for (u32 param = 0; param < length && b < chunk.size; param++)
-						ev.message[2 + param] = chunk.buffer[b++];
-				}
-				else // Midi Channel Event
-				{
-					switch (event_type & 0xF0)
-					{
-					case 0xF0:	ev.size = 1; break;
-					case 0xD0:
-					case 0xC0:	ev.size = 2; break;
-					default:	ev.size = 3; break;
-					}
-
-					ev.message = new u8[ev.size];
-					ev.message[0] = event_type;
-					for (u32 param = 1; param < ev.size && b < chunk.size; param++)
-						ev.message[param] = chunk.buffer[b++];
-				}
-
-				// Read out event
-#ifdef MIDI_READOUT
-				std::cout << "Event " << track.size() << ": @" << ev.tick << " (" << std::hex;
-				for (u32 e = 0; e < ev.size; e++)
-				{
-					if (ev.message[0] == 0xFF && e > 2)
-						std::cout << ev.message[e];
-					else
-					{
-						std::cout << "0x" << (u32)ev.message[e];
-						if (e != ev.size - 1) std::cout << ", ";
-					}
-				}
-				std::cout << std::dec << ")\n";
-#endif
-
-				track.push_back(ev);
-			}
-
-			std::cout << std::dec;
-		}
+		valid = load(filepath);
 	}
-
-	~MidiSequence() { if(tracks == nullptr) delete[] tracks; }
+	~MidiSequence()
+	{ 
+		if (tracks != nullptr) 
+			delete[] tracks;
+	}
 };
 
+// A static class for processing sequence data
 class MidiSystem
 {
 public:
-	inline static u64 nextEndTick(const MidiTrack& track, const u32 index, const u8 channel, const u8& tone)
+	constexpr static bool isMessageNote(const MidiEvent& event) { return (event.message[MESSAGE_STATUS] & 0xF0) == 0x80 || (event.message[MESSAGE_STATUS] & 0xF0) == 0x90; }
+	constexpr static bool equals(const MidiEvent& event, const u8& channel, const u8& tone) { return (event.message[0] & 0x0F) == channel && event.message[1] == tone; }
+	static u64 nextEndTick(const MidiTrack& track, const u32 index, const u8 channel, const u8& tone);
+	static const MidiEvent* findMessage(const MidiTrack& track, const u8 m0, const u8 m1);
+	static const MidiEvent* findMessage(const MidiSequence& sequence, const u8 m0, const u8 m1);
+};
+
+// The structure of a chunk within a .sf2 file
+struct SF2Chunk
+{
+	u32 id = 0;
+	u32 size = 0;
+	u32 name = 0;
+	u8* data = nullptr;
+	std::vector<SF2Chunk> subchunks;
+
+	bool subdivide(const u32 level);
+
+	inline constexpr const SF2Chunk* findTag(const u32& tagID) const
 	{
-		for (u32 i = index; i < track.size(); i++)
+		if (id == tagID)
+			return this;
+		for (u32 i = 0; i < subchunks.size(); i++)
 		{
-			if (((track[i].message[0] & 0xF0) == 0x80 || (track[i].message[0] & 0xF0) == 0x90) &&
-				(track[i].message[0] & 0x0F) == channel && track[i].message[1] == tone)
-				return track[i].tick;
+			const SF2Chunk* temp = subchunks[i].findTag(tagID);
+			if (temp != nullptr)
+				return temp;
 		}
-		return 0;
+		return nullptr;
 	}
 
-	inline static u64 findTempo(const MidiSequence& sequence)
+	constexpr static bool isValidChunkID(const u32& id)
 	{
-		for (u32 t = 0; t < sequence.size; t++)
-		{
-			MidiTrack& track = sequence.tracks[t];
-			for (u32 m = 0; m < track.size(); m++)
-			{
-				MidiEvent& event = track[m];
-				if (event.size > 2 && event.message[0] == 0xFF && event.message[1] == 0x51)
-				{
-					u64 tempo = 0;
-					u8 size = event.message[2];
-					for (u8 b = 0; b < size; b++)
-					{
-						tempo = tempo << 8;
-						tempo |= event.message[3 + b];
-					}
-					return tempo; // x us per quarter beat
-				}
-			}
-		}
-		std::cout << "NO TEMPO CHANGE DETECTED: DEFAULT USED" << std::endl;
-		return 1000000;
+		bool valid = 0;
+		for (u32 i = 0; i < NUM_CHUNK_IDS; i++)
+			valid |= (id == SF2_CHUNK_IDS[i]);
+		return valid;
 	}
 };
 
+// An object containing data from a .sf2 file
+class SF2File : public ARCFile
+{
+	bool load(const char* filepath) override;
+
+public:
+	SF2Chunk main_chunk;
+
+	SF2File(const char* filepath) { valid = load(filepath); }
+	inline constexpr const SF2Chunk* getChunkWithID(const u32& id) const { return main_chunk.findTag(id); }
+};
+
+// SF2 data types
+typedef unsigned short SFSampleLink;
+typedef short genAmountType; // 0-7 = LoByte, 8 - 15 = HiByte (or a single short value)
+
+// Chunk that contains bank data
+constexpr u32 PHDR_CHUNK_SIZE = 38;
+struct PHDRChunk
+{
+	u8 achPresetName[20];
+	u16 wPreset;
+	u16 wBank;
+	u16 wPresetBagNdx;
+	u32 dwLibrary;
+	u32 dwGenre;
+	u32 dwMorphology;
+};
+
+// Chunk that points to other chunks
+constexpr u32 BAG_CHUNK_SIZE = 4;
+struct BAGChunk
+{
+	u16 wGenIndex;
+	u16 wModIndex;
+};
+
+// Chunk that contains generator data
+constexpr u32 GEN_CHUNK_SIZE = 4;
+struct GENChunk
+{
+	u16 sfGenOper;
+	genAmountType genAmount;
+};
+
+// Chunk that contains instrument data
+constexpr u32 INST_CHUNK_SIZE = 22;
+struct INSTChunk
+{
+	u8 achInstName[20];
+	u16 wInstBagIndex;
+};
+
+// Chunk that contains sample data
+constexpr u32 SHDR_CHUNK_SIZE = 46;
+struct SHDRChunk
+{
+	u8 achSampleName[20];
+	u32 dwStart;
+	u32 dwEnd;
+	u32 dwStartLoop;
+	u32 dwEndLoop;
+	u32 dwSampleRate;
+	u8 byOriginalPitch;
+	u8 chPitchCorrection;
+	u16 wSampleLink;
+	SFSampleLink sfSampleType;
+};
+
+// An object containing all time parameters of a sound envelope
+struct Envelope
+{
+	float attackVolEnv = 0.0f;
+	float holdVolEnv = 0.0f;
+	float decayVolEnv = 0.0f;
+	float sustainVolEnv = 0.0f;
+	float releaseVolEnv = 0.0f;
+};
+
+// An object linking the SHDR chunk to its sample
+struct ChunkSample
+{
+	const SHDRChunk* chunk;
+	short* sample = nullptr;
+	short* inst = nullptr;
+	float initial_offset;
+	float ending_offset;
+	u32 length;
+	bool loop = true;
+
+	constexpr void create(const SHDRChunk* shdr, short* smpl)
+	{
+		chunk = shdr;
+		sample = smpl + shdr->dwStart;
+		length = shdr->dwEndLoop - shdr->dwStartLoop;
+
+		if (!length)
+		{
+			length = size();
+			loop = false;
+		}
+
+		inst = loop ? smpl + shdr->dwStartLoop : sample;
+		initial_offset = loop ? -(float)(shdr->dwStartLoop - shdr->dwStart) / length : 0.0f;
+		ending_offset = loop ? (float)(shdr->dwEnd - shdr->dwStartLoop) / length : 1.0f;
+	}
+
+	constexpr bool isEmpty() const { return sample == nullptr; }
+	constexpr u32 size() const { return chunk->dwEnd - chunk->dwStart; }
+};
+
+// An object that contains all of the generator parameters that apply to a sample or set of samples
+struct Instrument
+{
+	Envelope envelope;
+	ChunkSample* sample[1];
+	float volume_pan = 1.0f;
+	bool loop = true;
+
+	constexpr void loadSample(ChunkSample* smpl)
+	{
+		sample[0] = smpl;
+		if ( smpl->length == smpl->size() )
+			loop = false;
+	}
+
+	constexpr ChunkSample* getSample(const u8& tone) const { return sample[0]; }
+	constexpr bool isEmpty() const { return sample[0] == nullptr; }
+
+	void applyGenerator(GENChunk& gen, ChunkSample* samples);
+};
+
+// Soundfont object, which contains a soundbank
+class Soundfont : public ARCFile
+{
+	const SF2File file;
+	Instrument soundbank[128];
+	ChunkSample* samples;
+	u32 version = 0;
+	u32 smpl_size = 0;
+	short* smpl_u16 = nullptr;
+	char* engine_name = nullptr;
+	char* soundbank_name = nullptr;
+
+	bool load(const char* filepath) override;
+	void createInstrument(Instrument& instrument, const INSTChunk* inst, const SF2Chunk* ibag_chunk, const SF2Chunk* igen_chunk);
+	bool fillBank();
+
+public:
+	Soundfont(const char* filepath) : file(filepath) { valid = load(filepath); }
+	const Instrument* getSoundbank() { return soundbank; }
+};
 
 #endif
