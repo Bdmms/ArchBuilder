@@ -2,6 +2,9 @@
 
 using namespace arc;
 
+// Last status parsed in midi file
+u8 last_status = 0;
+
 // Loads a MidiFile
 // @Param path = path of the file
 // @Return whether the operation was successful
@@ -133,19 +136,53 @@ bool MidiSequence::addNextEvent(u8*& data, const u8* data_end, MidiTrack& track,
 		// Set the tick location forward based on change in time
 		tick += delta_time;
 		ev.tick = tick;
+		u8 buffer_push = 0;
 
-		// Set message to point to buffer
-		ev.message = data;
+		// Check if status byte exists
+		if (data[0] & 0x80)
+		{
+			// Set message to point to buffer
+			ev.message = data + 1;
+			ev.status = data[0];
+			last_status = data[0];
+			buffer_push = 1;
+		}
+		else
+		{
+			if (last_status == 0) throw "Missing status byte at start of file";
+
+			// Set message to point to buffer
+			ev.message = data;
+			ev.status = last_status;
+		}
 
 		// Determine size based on the status id
-		if (ev.message[0] == 0xFF) ev.size = ev.message[2] + 3;
-		else if ((ev.message[0] & 0xF0) == 0xF0) ev.size = ev.message[1] + 2;
-		else if ((ev.message[0] & 0xE0) == 0xC0) ev.size = 2;
-		else ev.size = 3;
+		if (ev.status == 0xFF) ev.size = ev.message[1] + 2; // TODO: Dynamic event size
+		else if ((ev.status & 0xF0) == 0xF0)
+		{
+			for (ev.size = 0; ev.message[ev.size] != 0xF7; ev.size++); // Count until EOX
+			ev.size++;
+		}
+		else if ((ev.status & 0xE0) == 0xC0) ev.size = 1;
+		else ev.size = 2;
+
+		// Check data bytes for invalid values
+		if ((ev.status & 0xF0) != 0xF0)
+		{
+			int i = 1;
+			for (u32 i = 0; i < ev.size; i++)
+				if (ev.message[i] & 0x80)
+					throw "Invalid data byte assigned to midi message parameter";
+		}
 
 		// Move buffer cursor and add event to list
-		data += ev.size; 
-		if (data > data_end) throw "Exceeded buffer size when interpreting MidiEvent parameters";
+		buffer_push += ev.size;
+		data += buffer_push;
+		if (data > data_end)
+		{ 
+			throw "Exceeded buffer size when interpreting MidiEvent parameters"; 
+		}
+
 		track.push_back(ev);
 
 #ifdef MIDI_READOUT
@@ -273,12 +310,14 @@ bool SF2File::load(const char* filepath)
 	}
 }
 
-// Applies a generator to the instrument
+// Applies a generator to the sample
 // @Param gen = generator chunk
-// @Param shdr_chunk = sample parameters
-// @Param sample = pointer to sample data
-void Instrument::applyGenerator(GENChunk& gen, ChunkSample* samples)
+// @Param samples = list of samples
+void FilteredSample::applyGenerator(GENChunk& gen, const SF2Chunk* samples, short* smpl)
 {
+	u32 shdr_loc = gen.genAmount * SHDR_CHUNK_SIZE;
+	SHDRChunk* shdr = (SHDRChunk*)(samples->data + shdr_loc);
+
 	// Each generator has an id that specifies its parameter
 	switch (gen.sfGenOper)
 	{
@@ -295,11 +334,13 @@ void Instrument::applyGenerator(GENChunk& gen, ChunkSample* samples)
 	case GEN_SUSTAIN_VOL_ENVELOPE:	envelope.sustainVolEnv = gen.genAmount > 0 ? ((float)gen.genAmount / 1000.0f) : 0.0f; break;
 	case GEN_RELEASE_VOL_ENVELOPE:	envelope.releaseVolEnv = std::pow(2.0f, (float)gen.genAmount / 1200.0f); break;
 	case GEN_INSTRUMENT:			break;
-	case GEN_KEY_RANGE:				std::cout << "\t\tRANGE: " << (gen.genAmount & 0xFF) << "-" << ((gen.genAmount & 0xFF00) >> 8) << std::endl; break;
+	case GEN_KEY_RANGE:				minKey = (gen.genAmount & 0xFF); maxKey = ((gen.genAmount & 0xFF00) >> 8); break;
 	case GEN_VELOCITY_RANGE:		break;
 	case GEN_INITIAL_ATTENUATION:	break;
-	case GEN_SAMPLE_ID:				loadSample(&samples[gen.genAmount]); break;
+	case GEN_SAMPLE_ID:				loadSample(shdr, smpl); break;
 	case GEN_SAMPLE_MODE:			loop = gen.genAmount & 1; break;
+	case GEN_SCALE_TUNING:			tuning = gen.genAmount / 100.0f; break;
+	case GEN_EXCLUSIVE_CLASS:		break; // FOR SNES.sf2 only
 	case GEN_OVERRIDE_ROOT_KEY:		break;
 	default:	std::cout << "\t\tUNKNOWN GENERATOR: " << gen.sfGenOper << std::endl;
 	}
@@ -350,39 +391,6 @@ bool Soundfont::load(const char* filepath)
 	}
 }
 
-// Constructs an Instrument from multiple chunks
-// @Param instrument = Instrument to construct
-// @Param inst = instrument chunk
-// @Param ibag_chunk = instrument bag chunk list
-// @Param igen_chunk = instrument generator chunk list
-// @Param shdr_chunk = sample data chunk list
-void Soundfont::createInstrument(Instrument& instrument, const INSTChunk* inst, const SF2Chunk* ibag_chunk, const SF2Chunk* igen_chunk)
-{
-	// Obtain bag chunk from ibag list
-	u32 ibag_size = ibag_chunk->size / BAG_CHUNK_SIZE;
-	u32 bagLoc = inst->wInstBagIndex * BAG_CHUNK_SIZE;
-	BAGChunk* bag = (BAGChunk*)(ibag_chunk->data + bagLoc);
-
-	// Determine the range of generators that apply to this instrument
-	u32 nextBag = inst->wInstBagIndex + 1;
-	u32 nbagLoc = nextBag * BAG_CHUNK_SIZE;
-	u32 nextGen = nextBag < ibag_size ? ((BAGChunk*)(ibag_chunk->data + nbagLoc))->wGenIndex : ibag_size;
-
-	// Add all generators in igen list
-	std::cout << "\tBAG " << inst->wInstBagIndex << ":\n";
-	for (u32 g = bag->wGenIndex; g < nextGen; g++)
-	{
-		u32 genLoc = g * GEN_CHUNK_SIZE;
-		GENChunk* igen = (GENChunk*)(igen_chunk->data + genLoc);
-
-		// Apply the generator to instrument
-		instrument.applyGenerator(*igen, samples);
-		std::cout << "\t\tGEN " << g << " (" << igen->sfGenOper << ", " << igen->genAmount << ")\n";
-	}
-}
-
-//#define SF2_DIRECT_SAMPLE_REF
-
 // Fills the soundbank as much as possible from chunk data
 // @Return whether the operation was successful
 bool Soundfont::fillBank()
@@ -423,41 +431,38 @@ bool Soundfont::fillBank()
 		std::cout << shdr_size << " SHDR CHUNKS\n";
 
 		// # of PHDR chunks = # of PBAG chunks
-		if (phdr_size < pbag_size) throw "PHDR chunk is too small in comparison to PBAG chunk";
+		//if (phdr_size < pbag_size) throw "PHDR chunk is too small in comparison to PBAG chunk";
 
-		// Organize all samples into a list
-		samples = new ChunkSample[shdr_size];
-		for (u32 i = 0; i < shdr_size; i++)
-		{
-			u32 shdrLoc = i * SHDR_CHUNK_SIZE;
-			SHDRChunk* shdr = (SHDRChunk*)(shdr_chunk->data + shdrLoc);
+		GeneratorMap generators;
 
-			// Link SHDR chunk with sample pointer
-			samples[i].create(shdr, smpl_u16);
-
-			/*
-			std::cout << "SHDR " << i << ": " << shdr->dwEnd - shdr->dwStart << " samples ";
-			switch (shdr->sfSampleType)
-			{
-			case 1: std::cout << "(MONO)\n"; break;
-			case 2: std::cout << "(RIGHT)\n"; break;
-			case 4: std::cout << "(LEFT)\n"; break;
-			case 8: std::cout << "(LINKED)\n"; break;
-			case 32769: std::cout << "(ROM RIGHT)\n"; break;
-			case 32770: std::cout << "(ROM LEFT)\n"; break;
-			case 32776: std::cout << "(ROM LINKED)\n"; break;
-			default: std::cout << "(UNKNOWN)\n"; break;
-			}*/
-		}
-
+		// Create samples for soundbank
+		gen_samples = new FilteredSample[ibag_size];
 		for (u32 i = 0; i < ibag_size; i++)
 		{
 			u32 bagLoc = i * BAG_CHUNK_SIZE;
-			BAGChunk* ibag = (BAGChunk*)(ibag_chunk->data + bagLoc);
+			BAGChunk* bag = (BAGChunk*)(ibag_chunk->data + bagLoc);
+
+			// Determine the range of generators that apply to bank
+			u32 nextBag = i + 1;
+			u32 nbagLoc = nextBag * BAG_CHUNK_SIZE;
+			BAGChunk* nIbag = (BAGChunk*)(ibag_chunk->data + nbagLoc);
+			u16 nextGen = nextBag < ibag_size ? nIbag->wGenIndex : igen_size;
+
+			// Add all generators in igen list
+			//std::cout << "SAMPLE " << i << ":\n";
+			for (u16 g = bag->wGenIndex; g < nextGen; g++)
+			{
+				u32 genLoc = g * GEN_CHUNK_SIZE;
+				GENChunk* igen = (GENChunk*)(igen_chunk->data + genLoc);
+				generators.put(igen);
+				//std::cout << "\tGEN " << g << " (" << igen->sfGenOper << ", " << igen->genAmount << ")\n";
+			}
 
 			// Apply the generator to instrument
-			//std::cout << "IGEN " << g << " (" << ibag->wGenIndex << ", " << ibag->wGenIndex << ")\n";
+			generators.applyTo(gen_samples[i], shdr_chunk, smpl_u16);
 		}
+
+		std::vector<GENChunk> presets;
 
 		// Iterate though every bank
 		for (u32 i = 0; i < pbag_size; i++)
@@ -471,10 +476,11 @@ bool Soundfont::fillBank()
 			// Determine the range of generators that apply to bank
 			u32 nextBag = i + 1;
 			u32 nbagLoc = nextBag * BAG_CHUNK_SIZE;
-			u32 nextGen = nextBag < pbag_size ? ((BAGChunk*)(pbag_chunk->data + nbagLoc))->wGenIndex : pgen_size;
+			BAGChunk* nPbag = (BAGChunk*)(pbag_chunk->data + nbagLoc);
+			u16 nextGen = nextBag < pbag_size ? nPbag->wGenIndex : pgen_size;
 
 			// Iterate through every generator within range
-			for (u32 g = pbag->wGenIndex; g < nextGen; g++)
+			for (u16 g = pbag->wGenIndex; g < nextGen; g++)
 			{
 				u32 genLoc = g * GEN_CHUNK_SIZE;
 				GENChunk* pgen = (GENChunk*)(pgen_chunk->data + genLoc);
@@ -485,30 +491,43 @@ bool Soundfont::fillBank()
 					// Obtain instrument chunk
 					u32 instLoc = pgen->genAmount * INST_CHUNK_SIZE;
 					INSTChunk* inst = (INSTChunk*)(inst_chunk->data + instLoc);
-					std::cout << "INSTRUMENT " << pgen->genAmount << ": " << inst->achInstName << " (BANK = " << phdr->wPreset << ")\n";
 
-#ifndef SF2_DIRECT_SAMPLE_REF
-					if (phdr->wPreset > 127)
-						continue;
+					u16 instBag = inst->wInstBagIndex;
+					u16 nextInst = pgen->genAmount + 1;
+					u32 nInstLoc = nextInst * INST_CHUNK_SIZE;
+					INSTChunk* nInst = (INSTChunk*)(inst_chunk->data + nInstLoc);
+					u16 nextIBag = nextInst < inst_size ? nInst->wInstBagIndex : ibag_size;
 
-					// Construct instrument located in bank
-					createInstrument(soundbank[phdr->wPreset], inst, ibag_chunk, igen_chunk);
-#endif
+					std::cout << "INSTRUMENT " << pgen->genAmount << ": " << " (SAMPLE = " << instBag << ") (PATCH = " << phdr->wPreset << ") (BANK = " << phdr->wBank << ")\n";
+
+					for (u16 smplIdx = instBag; smplIdx < nextIBag; smplIdx++)
+					{
+						// TODO: Apply all presets to selected sample without overwriting existing generators
+						//for (u32 i = 0; i < presets.size(); i++)
+						//	gen_samples[i].applyGenerator(presets[i], shdr_chunk, smpl_u16);
+
+						soundbank[phdr->wBank][phdr->wPreset].addSample(&gen_samples[smplIdx]);
+					}
 				}
 				else
+				{
+					bool newGen = true;
+					for (u32 i = 0; i < presets.size(); i++)
+					{
+						if (presets[i].sfGenOper == pgen->sfGenOper)
+						{
+							presets[i].genAmount = pgen->genAmount;
+							newGen = false;
+						}
+					}
+
+					if(newGen)
+						presets.push_back(*pgen);
+
 					std::cout << "PGEN " << g << " (" << pgen->sfGenOper << ", " << pgen->genAmount << ")\n";
+				}
 			}
 		}
-
-#ifdef SF2_DIRECT_SAMPLE_REF
-		for (int i = 0; i < 128 && i < shdr_size; i++)
-		{
-			u32 shdrLoc = i * SHDR_CHUNK_SIZE;
-			SHDRChunk* shdr = (SHDRChunk*)(shdr_chunk->data + shdrLoc);
-			//createInstrument(soundbank[i], inst, ibag_chunk, igen_chunk, shdr_chunk);
-			soundbank[i].loadSample(smpl_u16, shdr);
-		}
-#endif
 
 		return true;
 	}

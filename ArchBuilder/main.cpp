@@ -9,65 +9,66 @@
 
 int main(int argc, char* argv[])
 {
-	SoundChannel* channels[MIDI_NUM_CHANNELS] =
-	{
-		new Oscillator(GBSquareWave0),
-		new Oscillator(GBSquareWave1),
-		new Oscillator(GBSquareWave0),
-		new Oscillator(GBSquareWave1),
-		new Oscillator(triangleWave),
-		new Oscillator(sawtoothWave),
-		new Oscillator(squareWave),
-		new Oscillator(sawtoothWave),
-		new Oscillator(noise),
-		new Oscillator(noise),
-		new Oscillator([](const smpl_time& pos) { return SAMPLE_MIN; }),
-		new Oscillator(noise),
-		new Oscillator(triangleWave),
-		new Oscillator(squareWave),
-		new Oscillator(cotModWave),
-		new Oscillator(GenesisSBPPZ)
-	};
-
 	// Does not load
 	//ARCAudioStream::playToChannels(channels, "Other\\Break the Targets!", true);
 
-	//Soundfont sf2("AUDIO\\Other\\SNES.sf2");
-	//Soundfont sf2("AUDIO\\soundsf2\\SND_BGM_M_DUNGEON_GENERAL_01.sf2");
+	//Soundfont* sf2 = new Soundfont("AUDIO\\__SF2__\\SAdv3.sf2");
+	//Soundfont* sf2 = new Soundfont("AUDIO\\__SF2__\\SNES.sf2");
+	//Soundfont* sf2 = new Soundfont("AUDIO\\__SF2__\\PMD1\\SND_BGM_M_DUNGEON_HONOU_01.sf2");
 
-	// ARCAudioStream::playToChannels(channels, "Other\\Super Mario World - Athletic", true, &sf2);
-	// ARCAudioStream::playToChannels(channels, "Other\\Super Mario World 2 - Big Boss", true );
-	// ARCAudioStream::playToChannels(channels, "Other\\Checker_Knights", true, &sf2);
-	// ARCAudioStream::playToChannels(channels, "Other\\Beanstalk_Park", true );
-	// ARCAudioStream::playToChannels(channels, "SND_BGM_M_DUNGEON_GENERAL_01", true );
+	//ARCAudioStream::playKeyboard( sf2 );
 
+	// ARCAudioStream::playToChannels(channels, "Super Mario World - Athletic", true, sf2);
+	// ARCAudioStream::playToChannels(channels, "Super Mario World 2 - Big Boss", true, sf2);
+	// ARCAudioStream::playToChannels(channels, "Checker_Knights", true, sf2);
+	// ARCAudioStream::playToChannels(channels, "Beanstalk_Park", true, sf2);
+	// ARCAudioStream::playToChannels(channels, "PMD1\\SND_BGM_M_DUNGEON_TENKUU_01", true);
+
+	// ARCAudioStream::playFrom( "SA3\\song024", sf2);		// Zone 3 - Act 1
+	// ARCAudioStream::playFrom( "SA3\\song036", sf2);		// Zone 5 - Act 1
+	// ARCAudioStream::playFrom( "SA3\\song040", sf2 );		// Zone 6 - Act 1
+	// ARCAudioStream::playFrom( "SA3\\song044", sf2 );		// Zone 7 - Act 1 (Chaos Angel)
+	// ARCAudioStream::playFrom( "SA3\\song050", sf2);		// Boss Theme
+	// ARCAudioStream::playFrom( "SA3\\song051", sf2);		// Boss Theme Pinch
+	// ARCAudioStream::playFrom( "SA3\\song056", sf2);		// Nonaggression
+	
 	// TODO: ENVELOPE SCALER / SOUND_MIXING (Problem with envelope)
-	// ARCAudioStream::playFrom("SND_BGM_M_BOSS02");					// Battle against a Legend - Drum samples are too quiet
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_TENKUU_01");			// Sky Tower - Drum samples are too quiet
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_AYASHIIMORI_01");	// Sinister Woods - Sound mixing is bad
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_CHIISANAMORI_0");	// Tiny Woods - Incorrect envelope
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_HAGANE_01");			// Mt. Steel - Completley wrong sounds
-
+	 
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_HAGANE_01");		// Mt. Steel - Missing sounds
+	
 	// OK
-	// ARCAudioStream::playFrom("SND_BGM_M_SYS_ENDING_01");
-	//ARCAudioStream::playFrom("SND_BGM_M_HABITAT_HIROBA");
-	// ARCAudioStream::playFrom("SND_BGM_M_BOSS01");				// Boss Battle
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_GUNJYOU_01");	// Silent ???
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_DENJIHA_01");	// Thunderwave Cave
-	ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_KYOUKOKU_01");	// Great Canyon
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_HONOU_01");		// Mt. Blaze	
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_HONOU_02");		// Mt. Blaze Peak
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_JUHYOU_02");		// Mt. Freeze Peak
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_CHITEI_01");		// Magma Cavern
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_TENKUU_02");		// Sky Tower Summit
-	// ARCAudioStream::playFrom("SND_BGM_M_EVENT_DREAM_01");		// In a Dream
-	// ARCAudioStream::playFrom("SND_BGM_M_EVENT_DREAM_02");		// Benevolent Spirit
-	// ARCAudioStream::playFrom("SND_BGM_M_EVENT_ENV_MYSTIC");		// Event - Mystic
-	// ARCAudioStream::playFrom("SND_BGM_M_EVENT_YUME");			// Welcome to the World of Pokemon
-	// ARCAudioStream::playFrom("SND_BGM_M_SYS_STEAL");				// Theif!
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_GENERAL_01");	// Buried Relic
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_RAIMEI_01");		// Mt. Thunder
-	// ARCAudioStream::playFrom("SND_BGM_M_DUNGEON_RAIMEI_02");		// Mt. Thunder Peak
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_BOSS01");					// Boss Battle
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_BOSS02");					// Battle against a Legend
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_CHIISANAMORI_0");	// Tiny Woods - Incorrect Envelope
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_CHINMOKU_01");		// ??? - Sound mixing issues
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_GUNJYOU_01");		// Silent ???
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_AYASHIIMORI_01");	// Sinister Woods
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_DENJIHA_01");		// Thunderwave Cave
+	ARCAudioStream::playFile("PMD1\\SND_BGM_M_DUNGEON_KYOUKOKU_01");		// Great Canyon
+	// ARCAudioStream::playFile("PMD1\\SND_BGM_M_DUNGEON_HONOU_01");		// Mt. Blaze	
+	// ARCAudioStream::playFile("PMD1\\SND_BGM_M_DUNGEON_HONOU_02");		// Mt. Blaze Peak
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_JUHYOU_01");		// Mt. Freeze
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_JUHYOU_02");		// Mt. Freeze Peak
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_CHITEI_01");		// Magma Cavern
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_TENKUU_01");		// Sky Tower
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_TENKUU_02");		// Sky Tower Summit
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_GENERAL_01");		// Buried Relic
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_GENERAL_02");		// ???
+	// ARCAudioStream::playFile("PMD1\\SND_BGM_M_DUNGEON_RAIMEI_01");		// Mt. Thunder
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_RAIMEI_02");		// Mt. Thunder Peak
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_REIHOU_01");		// Surround Sea
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_REIHOU_02");		// Deep Surround Sea
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_EVENTFLOOR_01");	// End of Dungeon
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_DUNGEON_TUTORIAL_01");		// Dojo
+	// ARCAudioStream::playFile("PMD1\\SND_BGM_M_HABITAT_HIROBA");			// Town Square
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_EVENT_DREAM_01");			// In a Dream
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_EVENT_DREAM_02");			// Benevolent Spirit
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_EVENT_ENV_MYSTIC");		// Event - Mystic
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_EVENT_YUME");				// Welcome to the World of Pokemon
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_SYS_TITLE_01");			// Opening
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_SYS_TITLE_02");			// Title
+	// ARCAudioStream::playFile("PMD1\\SND_BGM_M_SYS_ENDING_01");			// Ending Credits
+	// ARCAudioStream::playFrom("PMD1\\SND_BGM_M_SYS_STEAL");				// Theif!
 
 	arc::cleanUp();
 	return 404;

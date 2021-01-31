@@ -147,7 +147,7 @@
   <ItemGroup>
     <ClInclude Include="ARM7.h" />
     <ClInclude Include="AudioAdapter.h" />
-    <ClInclude Include="AudioSequencer.h" />
+    <ClInclude Include="AudioController.h" />
     <ClInclude Include="core.h" />
     <ClInclude Include="DisplayAdapter.h" />
     <ClInclude Include="InstructionSet.h" />
@@ -156,11 +156,11 @@
     <ClInclude Include="MIDI.h" />
     <ClInclude Include="AudioChannel.h" />
     <ClInclude Include="Processor.h" />
+    <ClInclude Include="sound.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioAdapter.cpp" />
-    <ClCompile Include="AudioChannel.cpp" />
-    <ClCompile Include="AudioSequencer.cpp" />
+    <ClCompile Include="AudioController.cpp" />
     <ClCompile Include="core.cpp" />
     <ClCompile Include="DisplayAdapter.cpp" />
     <ClCompile Include="main.cpp" />

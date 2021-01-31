@@ -3,23 +3,10 @@
 #ifndef MIDI_H
 #define MIDI_H
 
-#include "core.h"
+#include "sound.h"
 
-constexpr u8 MESSAGE_STATUS = 0;
-constexpr u8 MESSAGE_TONE = 1;
-constexpr u8 MESSAGE_VOLUME = 2;
-
-constexpr float CENT = 1.000577790f;
-constexpr float CENTIBEL = 1.011579454f;
-constexpr float DECIBEL = 1.122018454f;
-constexpr float TIMECENT = 1.000577790f;
-
-const float HALFSCALE	= pow(2.0f, 6.0f / 12.0f) - 1.0f;
-const float QUADTONE	= pow(2.0f, 4.0f / 12.0f) - 1.0f;
-const float TRITONE		= pow(2.0f, 3.0f / 12.0f) - 1.0f;
-const float DUALTONE	= pow(2.0f, 2.0f / 12.0f) - 1.0f;
-const float FULLTONE	= pow(2.0f, 1.0f / 12.0f) - 1.0f;
-const float SEMITONE	= pow(2.0f, 0.5f / 12.0f) - 1.0f;
+constexpr u8 MESSAGE_TONE = 0;
+constexpr u8 MESSAGE_VOLUME = 1;
 
 constexpr u8 MIDI_NUM_CHANNELS = 16;
 constexpr u32 NUM_CHUNK_IDS = 24;
@@ -38,7 +25,7 @@ const u32 SF2_CHUNK_IDS[NUM_CHUNK_IDS] = {
 enum Generator
 {
 	GEN_START_ADDRESS_OFFSET = 0,
-	GEN_REVERB = 16,
+	GEN_REVERB = 16, // Unused
 	GEN_PAN = 17,
 	GEN_ATTACK_VOL_ENVELOPE = 34,
 	GEN_HOLD_VOL_ENVELOPE = 35,
@@ -47,11 +34,13 @@ enum Generator
 	GEN_RELEASE_VOL_ENVELOPE = 38,
 	GEN_INSTRUMENT = 41,
 	GEN_KEY_RANGE = 43,
-	GEN_VELOCITY_RANGE = 44,
-	GEN_INITIAL_ATTENUATION = 48,
+	GEN_VELOCITY_RANGE = 44, // Unused
+	GEN_INITIAL_ATTENUATION = 48, // Unused
 	GEN_SAMPLE_ID = 53,
 	GEN_SAMPLE_MODE = 54,
-	GEN_OVERRIDE_ROOT_KEY = 58
+	GEN_SCALE_TUNING = 56, // Unused
+	GEN_EXCLUSIVE_CLASS = 57, // Unused
+	GEN_OVERRIDE_ROOT_KEY = 58 // Unused
 };
 
 // A readable file
@@ -100,6 +89,7 @@ struct MidiEvent
 	u64 tick;
 	u32 size;
 	u8* message;
+	u8  status;
 
 	inline void print(const u32 id) const;
 };
@@ -137,7 +127,7 @@ public:
 class MidiSystem
 {
 public:
-	constexpr static bool isMessageNote(const MidiEvent& event) { return (event.message[MESSAGE_STATUS] & 0xF0) == 0x80 || (event.message[MESSAGE_STATUS] & 0xF0) == 0x90; }
+	constexpr static bool isMessageNote(const MidiEvent& event) { return (event.status & 0xF0) == 0x80 || (event.status & 0xF0) == 0x90; }
 	constexpr static bool equals(const MidiEvent& event, const u8& channel, const u8& tone) { return (event.message[0] & 0x0F) == channel && event.message[1] == tone; }
 	static u64 nextEndTick(const MidiTrack& track, const u32 index, const u8 channel, const u8& tone);
 	static const MidiEvent* findMessage(const MidiTrack& track, const u8 m0, const u8 m1);
@@ -155,7 +145,7 @@ struct SF2Chunk
 
 	bool subdivide(const u32 level);
 
-	inline constexpr const SF2Chunk* findTag(const u32& tagID) const
+	constexpr const SF2Chunk* findTag(const u32& tagID) const
 	{
 		if (id == tagID)
 			return this;
@@ -186,7 +176,7 @@ public:
 	SF2Chunk main_chunk;
 
 	SF2File(const char* filepath) { valid = load(filepath); }
-	inline constexpr const SF2Chunk* getChunkWithID(const u32& id) const { return main_chunk.findTag(id); }
+	constexpr const SF2Chunk* getChunkWithID(const u32& id) const { return main_chunk.findTag(id); }
 };
 
 // SF2 data types
@@ -241,80 +231,116 @@ struct SHDRChunk
 	u32 dwEndLoop;
 	u32 dwSampleRate;
 	u8 byOriginalPitch;
-	u8 chPitchCorrection;
+	char chPitchCorrection;
 	u16 wSampleLink;
 	SFSampleLink sfSampleType;
 };
 
-// An object containing all time parameters of a sound envelope
-struct Envelope
-{
-	float attackVolEnv = 0.0f;
-	float holdVolEnv = 0.0f;
-	float decayVolEnv = 0.0f;
-	float sustainVolEnv = 0.0f;
-	float releaseVolEnv = 0.0f;
-};
-
 // An object linking the SHDR chunk to its sample
-struct ChunkSample
+struct FilteredSample : public Sample
 {
-	const SHDRChunk* chunk;
+	const SHDRChunk* shdr = nullptr;
 	short* sample = nullptr;
-	short* inst = nullptr;
-	float initial_offset;
-	float ending_offset;
-	u32 length;
-	bool loop = true;
+	float volume_pan = 1.0f;
+	float tuning = 1.0f;
+	u8 minKey = 0;
+	u8 maxKey = 127;
 
-	constexpr void create(const SHDRChunk* shdr, short* smpl)
+	constexpr void loadSample(const SHDRChunk* shdr_chunk, short* smpl)
 	{
-		chunk = shdr;
+		shdr = shdr_chunk;
 		sample = smpl + shdr->dwStart;
-		length = shdr->dwEndLoop - shdr->dwStartLoop;
-
-		if (!length)
+		length = (float)(shdr->dwEndLoop - shdr->dwStartLoop);
+		
+		if (length) // Not equal 0
 		{
-			length = size();
+			inst = smpl + shdr->dwStartLoop;
+			initial_offset = -(float)(shdr->dwStartLoop - shdr->dwStart) / length;
+			ending_offset = (float)(shdr->dwEnd - shdr->dwStartLoop) / length;
+		}
+		else
+		{
+			inst = sample;
+			length = (float)size();
 			loop = false;
 		}
-
-		inst = loop ? smpl + shdr->dwStartLoop : sample;
-		initial_offset = loop ? -(float)(shdr->dwStartLoop - shdr->dwStart) / length : 0.0f;
-		ending_offset = loop ? (float)(shdr->dwEnd - shdr->dwStartLoop) / length : 1.0f;
 	}
 
-	constexpr bool isEmpty() const { return sample == nullptr; }
-	constexpr u32 size() const { return chunk->dwEnd - chunk->dwStart; }
+	constexpr int size() const { return shdr->dwEnd - shdr->dwStart;  }
+	constexpr bool isEmpty() const { return inst == nullptr; }
+
+	void applyGenerator(GENChunk& gen, const SF2Chunk* samples, short* smpl);
 };
 
 // An object that contains all of the generator parameters that apply to a sample or set of samples
 struct Instrument
 {
-	Envelope envelope;
-	ChunkSample* sample[1];
-	float volume_pan = 1.0f;
-	bool loop = true;
+	FilteredSample* sample[128];
+	bool empty;
 
-	constexpr void loadSample(ChunkSample* smpl)
-	{
-		sample[0] = smpl;
-		if ( smpl->length == smpl->size() )
-			loop = false;
+	constexpr Instrument() : sample(), empty(true) { for (u32 i = 0; i < 128; i++) sample[i] = nullptr; }
+	
+	constexpr FilteredSample* getSample(const u8 tone) const
+	{ 
+		return sample[tone & 0x7F]; 
 	}
 
-	constexpr ChunkSample* getSample(const u8& tone) const { return sample[0]; }
-	constexpr bool isEmpty() const { return sample[0] == nullptr; }
+	constexpr void addSample(FilteredSample* smpl)
+	{ 
+		if (smpl->shdr == nullptr) return;
 
-	void applyGenerator(GENChunk& gen, ChunkSample* samples);
+		// Assign all tones to sample
+		if (empty)
+			for (u32 i = 0; i < 128; i++) sample[i & 0x7F] = smpl;
+		// Assign range of tones to sample
+		else
+			for (u32 i = smpl->minKey; i <= smpl->maxKey && i < 128; i++) sample[i & 0x7F] = smpl;
+
+		empty = false;
+	}
 };
+
+struct GeneratorMap
+{
+	u16 map[64];
+	bool used[64];
+
+	GeneratorMap() : map(), used()
+	{
+		for (u32 i = 0; i < 64; i++)
+			used[i] = false;
+	}
+
+	void put(const GENChunk* chunk)
+	{
+		map[chunk->sfGenOper & 0x3F] = chunk->genAmount;
+		used[chunk->sfGenOper & 0x3F] = true;
+	}
+
+	void applyTo(FilteredSample& sample, const SF2Chunk* shdr_chunk, short* smpl)
+	{
+		GENChunk chunk;
+		for (u32 i = 0; i < 64; i++)
+		{
+			if (used[i])
+			{
+				chunk.sfGenOper = i;
+				chunk.genAmount = map[i];
+				sample.applyGenerator(chunk, shdr_chunk, smpl);
+			}
+		}
+	}
+};
+
+constexpr u32 NUM_BANKS = 32;
+typedef Instrument Soundbank[128];
 
 // Soundfont object, which contains a soundbank
 class Soundfont : public ARCFile
 {
 	const SF2File file;
-	Instrument soundbank[128];
-	ChunkSample* samples;
+	Soundbank soundbank[NUM_BANKS];
+	FilteredSample* gen_samples;
 	u32 version = 0;
 	u32 smpl_size = 0;
 	short* smpl_u16 = nullptr;
@@ -322,12 +348,11 @@ class Soundfont : public ARCFile
 	char* soundbank_name = nullptr;
 
 	bool load(const char* filepath) override;
-	void createInstrument(Instrument& instrument, const INSTChunk* inst, const SF2Chunk* ibag_chunk, const SF2Chunk* igen_chunk);
 	bool fillBank();
 
 public:
 	Soundfont(const char* filepath) : file(filepath) { valid = load(filepath); }
-	const Instrument* getSoundbank() { return soundbank; }
+	Soundbank* getSoundbanks() { return soundbank; }
 };
 
 #endif

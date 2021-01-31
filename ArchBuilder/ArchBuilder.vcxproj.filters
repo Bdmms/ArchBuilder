@@ -45,7 +45,10 @@
     <ClInclude Include="AudioChannel.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AudioSequencer.h">
+    <ClInclude Include="AudioController.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sound.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -65,13 +68,10 @@
     <ClCompile Include="AudioAdapter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AudioChannel.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="MIDI.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="AudioSequencer.cpp">
+    <ClCompile Include="AudioController.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

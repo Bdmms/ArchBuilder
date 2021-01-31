@@ -3,12 +3,11 @@
 #include <SFML/Graphics.hpp>
 
 constexpr const char* FILE_LOCATION_AUDIO = "AUDIO\\";
-constexpr const char* FILE_LOCATION_SOUNDBANK = "AUDIO\\soundsf2\\";
+constexpr const char* FILE_LOCATION_SOUNDBANK = "AUDIO\\__SF2__\\";
 constexpr const char* FILE_EXTENSION_MID = ".mid";
 constexpr const char* FILE_EXTENSION_SF2 = ".sf2";
 
 void showOscilloscope(ARCAudioStream& stream, const u32& buffer_size);
-
 
 inline void playStream(ARCAudioStream& stream, const u32& buffer_size, const bool& oscilloscope)
 {
@@ -28,7 +27,24 @@ inline void playStream(ARCAudioStream& stream, const u32& buffer_size, const boo
 		sf::sleep(sf::seconds(0.1f));
 }
 
-void ARCAudioStream::playToChannels(SoundChannel** channels, const char* filename, const bool& oscilloscope, Soundfont* sf2)
+void ARCAudioStream::playKeyboard(Soundfont* sf2, const bool& oscilloscope)
+{
+	u32 buffer_size = CD_SAMPLE_RATE / 60;
+	MidiController controller;
+	ARCAudioStream stream(&controller, buffer_size * 2); // chunk size and num of channels
+
+	if (sf2 != nullptr)
+		controller.apply(sf2->getSoundbanks());
+
+	controller.getChannels()[0].audio_driver = SoundDriver::sampleFM;
+	controller.getChannels()[0].output = squareWave50;
+	for (int i = 0; i < 16; i++)
+		controller.set( i + 1, STATUS_CHANNEL_BANK_CHANGE, i, 0 );
+
+	playStream(stream, buffer_size, oscilloscope);
+}
+
+void ARCAudioStream::playFrom(const char* filename, Soundfont* sf2, const bool& oscilloscope)
 {
 	const char* midArr[3] = { FILE_LOCATION_AUDIO, filename, FILE_EXTENSION_MID };
 	const char* mid_filename = arc::concat(midArr, 3);
@@ -37,44 +53,41 @@ void ARCAudioStream::playToChannels(SoundChannel** channels, const char* filenam
 	if (!seq.isValid()) return;
 
 	u32 buffer_size = CD_SAMPLE_RATE / 60;
-	ARCAudioStream stream(channels, buffer_size * 2, MIDI_NUM_CHANNELS); // chunk size and num of channels
-	stream.getSequencer().load(seq);
+
+	MidiSequencer controller(seq);
+	ARCAudioStream stream( &controller, buffer_size * 2 ); // chunk size and num of channels
 
 	if (sf2 != nullptr)
-		stream.getSequencer().apply(sf2->getSoundbank());
+		controller.apply(sf2->getSoundbanks());
 
 	playStream(stream, buffer_size, oscilloscope);
 }
 
-void ARCAudioStream::playFrom(const char* filename, const bool& sampled, const bool& oscilloscope)
+void ARCAudioStream::playFile(const char* filename, const bool& sampled, const bool& oscilloscope)
 {
-	SoundChannel* channels[MIDI_NUM_CHANNELS];
-	for (u8 i = 0; i < MIDI_NUM_CHANNELS; i++)
-		channels[i] = new Oscillator(squareWave);
-	
 	const char* midArr[3] = { FILE_LOCATION_AUDIO, filename, FILE_EXTENSION_MID };
 	const char* mid_filename = arc::concat(midArr, 3);
 	MidiSequence seq(mid_filename);
+	Soundfont* soundfont = nullptr;
 
 	u32 buffer_size = CD_SAMPLE_RATE / 60;
-	ARCAudioStream stream(channels, buffer_size * 2, MIDI_NUM_CHANNELS); // chunk size and num of channels
-	stream.getSequencer().load(seq);
+
+	MidiSequencer controller(seq);
+	ARCAudioStream stream( &controller, buffer_size * 2 ); // chunk size and num of channels
 
 	if (sampled)
 	{
 		const char* sf2Arr[3] = { FILE_LOCATION_SOUNDBANK, filename, FILE_EXTENSION_SF2 };
 		const char* sf2_filename = arc::concat(sf2Arr, 3);
-		Soundfont soundfont(sf2_filename);
+		soundfont = new Soundfont(sf2_filename);
 
-		if (!soundfont.isValid()) return;
-		stream.getSequencer().apply(soundfont.getSoundbank());
+		if (!soundfont->isValid()) return;
+		controller.apply(soundfont->getSoundbanks());
 	}
 
 	playStream(stream, buffer_size, oscilloscope);
 
-	// Release the heap
-	for (u8 i = 0; i < 16; i++)
-		delete channels[i];
+	if (soundfont != nullptr) delete soundfont;
 }
 
 void drawBuffer(const sample* buffer, const u32& buffer_size, u32* frame, const u32 width, const u32 height, const u32& scanline)
@@ -113,6 +126,7 @@ inline void showOscilloscope(ARCAudioStream& stream, const u32& buffer_size)
 	sf::Sprite sprite(texture);
 	sf::Event event;
 	bool exit = false;
+	bool view = false;
 	u8 channel = 0;
 	u8 octave = C5;
 
@@ -137,21 +151,15 @@ inline void showOscilloscope(ARCAudioStream& stream, const u32& buffer_size)
 						break;
 
 					key_pressed[key] = true;
-					MidiEvent ev;
-					ev.size = 3;
-					ev.message = new u8[ev.size];
-					ev.message[MESSAGE_STATUS] = STATUS_CHANNEL_ON | channel;
-					ev.message[MESSAGE_TONE] = octave + key;
-					ev.message[MESSAGE_VOLUME] = 100;
-					stream.getSequencer().handleEvent(ev);
-					delete[] ev.message;
+					stream.getController()->set(channel, STATUS_CHANNEL_ON, octave + key, 100);
 				}
-				else if (event.key.code == sf::Keyboard::Up)  octave = (octave + 12) & 0x7F;
-				else if (event.key.code == sf::Keyboard::Down) octave = (octave - 12) & 0x7F;
+				else if (event.key.code == sf::Keyboard::Up)    octave = (octave + 12) & 0x7F;
+				else if (event.key.code == sf::Keyboard::Down)  octave = (octave - 12) & 0x7F;
 				else if (event.key.code == sf::Keyboard::Left)  channel = (channel - 1) & 0x0F;
 				else if (event.key.code == sf::Keyboard::Right) channel = (channel + 1) & 0x0F;
-				else if (event.key.code == sf::Keyboard::P)		stream.getSequencer().paused = !stream.getSequencer().paused;
-				else if (event.key.code == sf::Keyboard::S)		stream.getSequencer().skip( 1000 );
+				else if (event.key.code == sf::Keyboard::P)		stream.getController()->paused = !stream.getController()->paused;
+				else if (event.key.code == sf::Keyboard::S)		stream.getController()->skip(1000);
+				else if (event.key.code == sf::Keyboard::V)		view = !view;
 				exit = event.key.code == sf::Keyboard::Q;
 				break;
 			case sf::Event::KeyReleased:
@@ -166,22 +174,22 @@ inline void showOscilloscope(ARCAudioStream& stream, const u32& buffer_size)
 				if (key_pressed[15])
 					break;
 
-				MidiEvent ev;
-				ev.size = 3;
-				ev.message = new u8[ev.size];
-				ev.message[MESSAGE_STATUS] = STATUS_CHANNEL_OFF | channel;
-				ev.message[MESSAGE_TONE] = octave + event.key.code - sf::Keyboard::Num0;
-				ev.message[MESSAGE_VOLUME] = 0;
-				stream.getSequencer().handleEvent(ev);
-				delete[] ev.message;
+				stream.getController()->set(channel, STATUS_CHANNEL_OFF, octave + event.key.code - sf::Keyboard::Num0, 0);
 				break;
 			}
 		}
 
-		for (u32 i = 0; i < MIDI_NUM_CHANNELS; i++)
+		if (view)
 		{
-			u32 offset = div_width * (i % 4) + div_height * frame_width * (i / 4);
-			drawBuffer(stream.getChannelBuffer(i), buffer_size, frame + offset, div_width, div_height, frame_width);
+			drawBuffer(stream.getChannelBuffer(channel), buffer_size, frame, frame_width, frame_height, frame_width);
+		}
+		else
+		{ 
+			for (u32 i = 0; i < MIDI_NUM_CHANNELS; i++)
+			{
+				u32 offset = div_width * (i % 4) + div_height * frame_width * (i / 4);
+				drawBuffer(stream.getChannelBuffer(i), buffer_size, frame + offset, div_width, div_height, frame_width);
+			}
 		}
 
 		texture.update((sf::Uint8*)frame);

@@ -4,43 +4,13 @@
 #define AUDIO_CHANNEL_H
 
 #include "core.h"
-#include "MIDI.h"
-
-constexpr u32 CD_SAMPLE_RATE = 441000; // sample rate (samples / sec) : 44.1 KHz = CD Quality
-constexpr u32 OUT_SAMPLE_RATE = 441000;
-constexpr float PEAK_ENV = 1.0f;
-constexpr u32 PITCH_SHIFT = 16;
-
-#ifdef AUDIO_PARALLEL
-	#ifndef AUDIO_DOUBLE_PRECISION
-		constexpr float ENV_TIME = TIMECENT / CD_SAMPLE_RATE * 4.0f;
-		#define arcfloor(x) _mm256_floor_ps(x.vec)
-		typedef arc::vec8 env_time;
-		typedef arc::vec8 smpl_time;
-		typedef arc::vec8 sample;
-	#else
-		constexpr float ENV_TIME = TIMECENT / CD_SAMPLE_RATE * 8.0f;
-		#define arcfloor(x) _mm256_floor_pd(x.vec)
-		typedef arc::vec4 env_time;
-		typedef arc::vec4 smpl_time;
-		typedef arc::vec4 sample;
-	#endif
-#else
-	constexpr float ENV_TIME = TIMECENT / CD_SAMPLE_RATE;
-	#ifndef AUDIO_DOUBLE_PRECISION
-		#define arcfloor floorf
-		typedef float env_time;
-		typedef float smpl_time;
-		typedef float sample;
-	#else
-		#define arcfloor floor
-		typedef double env_time;
-		typedef double smpl_time;
-		typedef double sample;
-	#endif
-#endif
+#include "sound.h"
 
 #ifndef AUDIO_DOUBLE_PRECISION
+	#define arcfloor floorf
+	typedef float env_time;
+	typedef float smpl_time;
+	typedef float sample;
 	typedef float sample_float;
 	const sample SAMPLE_MIN = 0.0f;
 	const sample SAMPLE_MAX = 1.0f;
@@ -50,6 +20,10 @@ constexpr u32 PITCH_SHIFT = 16;
 	const smpl_time PI = acos(-1.0f);
 	const smpl_time PI2 = PI * 2.0f;
 #else
+	#define arcfloor floor
+	typedef double env_time;
+	typedef double smpl_time;
+	typedef double sample;
 	typedef double sample_float;
 	const sample SAMPLE_MIN = 0.0;
 	const sample SAMPLE_MAX = 1.0;
@@ -61,6 +35,7 @@ constexpr u32 PITCH_SHIFT = 16;
 #endif
 
 typedef sample (*channel_output)(const smpl_time& pos);
+typedef void (*sampler)(void* channel);
 
 enum class EnvMode
 {
@@ -74,164 +49,129 @@ enum class EnvMode
 
 static float silent(const float& pos) { return SAMPLE_MIN; }
 static float noise(const float& pos) { return (float)rand() / RAND_MAX; }
-static float squareWave(const float& pos) { return pos < 0.5f ? 1.0f : 0.0f; }
+static float squareWave75(const float& pos) { return pos < 0.75f ? 1.0f : 0.0f; }
+static float squareWave50(const float& pos) { return pos < 0.5f ? 1.0f : 0.0f; }
+static float squareWave25(const float& pos) { return pos < 0.25f ? 1.0f : 0.0f; }
 static float triangleWave(const float& pos) { return pos < 0.5f ? pos * 2.0f : 0.0f; }
 static float sawtoothWave(const float& pos) { return pos - floorf(pos); }
 static float sineWave(const float& pos) { return sin(pos * PI2); }
+static float highSineWave(const float& pos) { return sin(2.0f * pos * PI2); }
 static float GBSquareWave0(const float& pos) { return (pos < 0.5f ? sin(pos * PI2 * 0.5f) - 1.0f : cos(pos * PI2 * 0.5f) + 1.0f); }
 static float GBSquareWave1(const float& pos) { return (pos < 0.666f ? sin(pos * PI2 * 0.375f) - 1.0f : cos(pos * PI2 * 0.75f) + 1.0f); }
-static float cotModWave(const float& pos)
+static float GenesisSBPPZ(const float& pos)  { return sin(PI / (50.0f * (pos - 0.5f))); }
+
+namespace SoundDriver
 {
-	if (pos == 0.0f) return 0.0f;
-	float st = 1.0f / tan(pos * PI);
-	return st - floorf(st);
-}
-
-static float GenesisSBPPZ(const float& pos) 
-{ 
-	return sin(PI2 / (50.0f * (pos - 0.5f)));
-}
-
-class SoundChannel
-{
-protected:
-	channel_output output;
-	smpl_time sample_offset;
-	smpl_time frequency;
-	smpl_time frq_modifier;
-	sample volume;
-	sample stereo_pan;
-	sample channel_vol;
-
-public:
-	bool muted;
-
-	constexpr SoundChannel() : output(silent), muted(false),
-		sample_offset(FREQ_OFF), frequency(FREQ_OFF), frq_modifier(FREQ_HIGH), stereo_pan(SAMPLE_MIN), volume(SAMPLE_MIN), channel_vol(SAMPLE_MAX) {}
-	constexpr SoundChannel(channel_output out) : output(out), muted(false),
-		sample_offset(FREQ_OFF), frequency(FREQ_OFF), frq_modifier(FREQ_HIGH), stereo_pan(SAMPLE_MIN), volume(SAMPLE_MIN), channel_vol(SAMPLE_MAX) {}
-
-	constexpr void setBend(const smpl_time freq) { frq_modifier = freq; }
-	constexpr void setVolume(const sample vol) { channel_vol = vol; }
-	constexpr void setPan(const sample pan) { stereo_pan = pan; }
-
-	virtual void bindTone(const u8& tone) {}
-	virtual void start(const sample_float freq, const sample vol) = 0;
-	virtual void stop() = 0;
-	virtual void getSample(sample& leftSample, sample& rightSample) = 0;
+	static constexpr void sampleFM(void* channel);
+	static constexpr void sampleSF(void* channel);
 };
 
-class Oscillator : public SoundChannel
+struct SoundChannel
 {
-	bool enabled;
-
-public:
-	constexpr Oscillator() : enabled(false) {}
-	constexpr Oscillator(channel_output out) : SoundChannel(out), enabled(false) {}
-
-	inline void start(const sample_float freq, const sample vol) override
-	{ 
-		frequency = freq;
-		volume = vol;
-		enabled = true; 
-
-	#ifdef AUDIO_PARALLEL
-		sample_offset.setoffset(0.0, freq);
-	#endif
-	}
-
-	inline void stop() override { enabled = false; }
-	inline void getSample(sample& leftSample, sample& rightSample) override
-	{
-		if (!enabled || muted)
-		{
-			leftSample = SAMPLE_MIN;
-			rightSample = SAMPLE_MIN;
-			return;
-		}
-
-		sample generatedSample = volume * channel_vol * output(sample_offset);
-		leftSample = generatedSample * (DEFAULT_PAN - stereo_pan);
-		rightSample = generatedSample * (DEFAULT_PAN + stereo_pan);
-		sample_offset += frequency * frq_modifier;
-		sample_offset -= arcfloor(sample_offset);
-	}
-};
-
-class EnvelopeChannel : public SoundChannel
-{
-protected:
+	Sample* loop_sample = nullptr;
+	EnvMode mode = EnvMode::OFF;
 	float env_offset = 0.0f;
-	EnvMode mode = EnvMode::ATTACK;
 
-public:
-	constexpr EnvelopeChannel() {}
-	constexpr EnvelopeChannel(channel_output out) : SoundChannel(out) {}
-	inline void stop() override { mode = (mode != EnvMode::OFF ? EnvMode::RELEASE : EnvMode::OFF); env_offset = 0.0f; }
+	channel_output output;
+	sampler audio_driver = SoundDriver::sampleFM;
+
+	smpl_time sample_offset = FREQ_OFF;
+	smpl_time frequency = FREQ_OFF;
+	sample volume = SAMPLE_MIN;
+	sample stereo_pan = SAMPLE_MIN;
+	sample left_sample = SAMPLE_MIN;
+	sample right_sample = SAMPLE_MIN;
+
+	constexpr SoundChannel() : output(silent) {}
+	constexpr SoundChannel(channel_output out) : output(out) {}
 };
 
-class EnvelopeOscillator : public EnvelopeChannel
+namespace SoundDriver
 {
-public:
-	const Envelope& envelope;
+	constexpr sample SAMPLE_DIVISOR = 1.0f / 0x7FFF;
 
-	constexpr EnvelopeOscillator(channel_output out, const Envelope& sound) : EnvelopeChannel(out), envelope(sound) {}
-
-	inline void start(const sample_float freq, const sample vol) override
+	static constexpr sample envelope(EnvMode& mode, float& env_offset, const Envelope& inst)
 	{
-		frequency = freq;
-		volume = vol;
-		mode = EnvMode::ATTACK;
-		env_offset = 0.0f;
+		switch (mode)
+		{
+		case EnvMode::ATTACK: // This mode causes problems for now, so just skip to the next mode
+			if (env_offset < inst.attackVolEnv)
+				return env_offset / inst.attackVolEnv;
+			env_offset -= inst.attackVolEnv;
+			mode = EnvMode::HOLD;
 
-	#ifdef AUDIO_PARALLEL
-		sample_offset.setoffset(0.0, freq);
-	#endif
+		case EnvMode::HOLD:
+			if (env_offset < inst.holdVolEnv)
+				return PEAK_ENV;
+			env_offset -= inst.holdVolEnv;
+			mode = EnvMode::DECAY;
+
+		case EnvMode::DECAY:
+			if (env_offset < inst.decayVolEnv)
+				return (PEAK_ENV - inst.sustainVolEnv * env_offset / inst.decayVolEnv);
+			env_offset -= inst.decayVolEnv;
+			mode = EnvMode::SUSTAIN;
+
+		case EnvMode::SUSTAIN:
+			return PEAK_ENV - inst.sustainVolEnv;
+
+		case EnvMode::RELEASE:
+			if (env_offset <= inst.releaseVolEnv)
+				return (PEAK_ENV - inst.sustainVolEnv) * (PEAK_ENV - env_offset / inst.releaseVolEnv);
+			env_offset = 0.0f;
+			mode = EnvMode::OFF;
+
+		default:
+			return SAMPLE_MIN;
+		}
 	}
 
-	void getSample(sample& leftSample, sample& rightSample) override;
-};
-
-class SampleGenerator : public EnvelopeChannel
-{
-protected:
-	const Instrument& instrument;
-	const ChunkSample* loop_sample = nullptr;
-	const sample_float* freq_lookup;
-	smpl_time pitchCorrectness = FREQ_HIGH;
-
-public:
-	constexpr SampleGenerator(const SampleGenerator& gen) : instrument(gen.instrument), pitchCorrectness(gen.pitchCorrectness), freq_lookup(gen.freq_lookup) { }
-	constexpr SampleGenerator(const Instrument& sound, const sample_float* freq_lookup) : instrument(sound), freq_lookup(freq_lookup) { }
-
-	inline void bindTone(const u8& tone) override
+	static constexpr void sampleFM(void* channel)
 	{
-		loop_sample = instrument.getSample(tone);
+		SoundChannel& chan = *((SoundChannel*)channel);
+		if (chan.mode != EnvMode::ATTACK) return;
 
-		if (loop_sample->chunk->chPitchCorrection != 0)
-			std::cout << "WARNING! PITCH CORRECTNESS IN EFFECT!\n";
-
-		u32 shifted_pitch = loop_sample->chunk->byOriginalPitch - PITCH_SHIFT;
-		sample_float ratio_sample_length = (sample_float)loop_sample->length * freq_lookup[shifted_pitch > 127 ? 60 : shifted_pitch];
-		sample_float ratio_sample_rate = (sample_float)loop_sample->chunk->dwSampleRate / CD_SAMPLE_RATE;
-		pitchCorrectness = (ratio_sample_rate / ratio_sample_length);
+		sample generatedSample = chan.volume * chan.output(chan.sample_offset);
+		chan.left_sample = generatedSample * (DEFAULT_PAN - chan.stereo_pan);
+		chan.right_sample = generatedSample * (DEFAULT_PAN + chan.stereo_pan);
+		chan.sample_offset += chan.frequency;
+		chan.sample_offset -= arcfloor(chan.sample_offset);
 	}
 
-	inline void start(const sample_float freq, const sample vol) override
-	{ 
-		frequency = freq;
-		volume = vol;
-		mode = EnvMode::ATTACK; 
-		env_offset = 0.0f;
+	static constexpr void sampleSF(void* channel)
+	{
+		SoundChannel& chan = *((SoundChannel*)channel);
+		if (chan.mode == EnvMode::OFF || chan.loop_sample == nullptr) return;
 
-	#ifndef AUDIO_PARALLEL
-		sample_offset = loop_sample->initial_offset;
-	#else
-		sample_offset.setoffset(instrument.initial_offset, freq);
-	#endif
+		sample generatedSample = chan.volume * envelope(chan.mode, chan.env_offset, chan.loop_sample->envelope)
+			* chan.loop_sample->inst[(int)(chan.sample_offset * chan.loop_sample->length)] * SAMPLE_DIVISOR;
+
+		chan.left_sample = generatedSample * (DEFAULT_PAN - chan.stereo_pan);
+		chan.right_sample = generatedSample * (DEFAULT_PAN + chan.stereo_pan);
+
+		// TODO: Check if ENV_TIME is constant
+		chan.env_offset += ENV_TIME;
+		chan.sample_offset += chan.frequency;
+
+		if (chan.sample_offset < FREQ_HIGH)
+			return;
+		else if (chan.loop_sample->loop)
+			chan.sample_offset -= arcfloor(chan.sample_offset);
+		else if (chan.sample_offset >= chan.loop_sample->ending_offset)
+			chan.mode = EnvMode::OFF;
 	}
 
-	void getSample(sample& leftSample, sample& rightSample) override;
+	static constexpr void start(SoundChannel& channel)
+	{
+		channel.mode = EnvMode::ATTACK;
+		channel.env_offset = 0.0f;
+	}
+
+	static constexpr void stop(SoundChannel& channel)
+	{
+		channel.mode = (channel.mode != EnvMode::OFF ? EnvMode::RELEASE : EnvMode::OFF);
+		channel.env_offset = 0.0f;
+	}
 };
 
 #endif
