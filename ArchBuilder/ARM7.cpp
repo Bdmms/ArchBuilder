@@ -63,7 +63,7 @@ void ARM7TDMI::interpret(std::string line)
 
 	switch (instr->id) 
 	{
-	default: std::cout << "Error: unknown command!" << std::endl;
+	default: std::cout << "Error: unknown command!" << std::endl; return;
 
 	case B	: r[15] = *Rd; return;
 	case BL : r[14] = r[15];  r[15] = *Rd; return;
@@ -131,7 +131,8 @@ void ARM7TDMI::interpret(std::string line)
 
 	// OTHER ACTIONS
 	case PRINT: 
-		std::cout << arc::toHex(*Rd, bits) << std::endl; return; // Changed to arc may have caused errors
+		char buffer[arc::HEX_BUFFER_SIZE];
+		std::cout << arc::toHex(buffer, *Rd, bits) << std::endl; return; // Changed to arc may have caused errors
 		//if(parsed.size() > 2)* Rd += *Rm; // POST-FIX
 		return;
 
@@ -195,15 +196,19 @@ void ARM7TDMI::execute(unsigned int op)
 		{
 			switch (i)
 			{
-			case UND: undefined(op);
+			case UND: 
+				undefined(op);
+				break;
 			case BL:
 				r[14] = r[15] + 4;
+				[[fallthrough]];
 			case B: 
 				r[15] += (op & 0x800000 ? op & 0x7FFFFF : -(int((op & 0x7FFFFF) << 2)));
 				break;
 
 			case BLX:
 				r[14] = r[15] + 4;
+				[[fallthrough]];
 			case BX:
 				THUMB = r[op & 0xF] & 0x01;
 				r[15] = r[op & 0xF] & 0xFFFFFFFE;
@@ -312,9 +317,11 @@ void ARM7TDMI::start()
 	{
 		std::string command;
 		std::getline(std::cin, command);
-
 		unsigned int op = mem_map->readInt(r[15]);
-		std::cout << arc::toHex(op, 32) << ": " << identify(op) << std::endl;;
+
+		char buffer[arc::HEX_BUFFER_SIZE];
+		std::cout << arc::toHex(buffer, op, 32) << ": " << identify(op) << std::endl;
+
 		execute(op);
 		r[15] += 4;
 	}

@@ -1,11 +1,18 @@
 #include "AudioAdapter.h"
 #include <cmath>
 #include <SFML/Graphics.hpp>
+#include <string.h>
 
-constexpr const char* FILE_LOCATION_AUDIO = "AUDIO\\";
-constexpr const char* FILE_LOCATION_SOUNDBANK = "AUDIO\\__SF2__\\";
-constexpr const char* FILE_EXTENSION_MID = ".mid";
-constexpr const char* FILE_EXTENSION_SF2 = ".sf2";
+// Disable warnings from SFML library
+#pragma warning(disable : 26812)
+
+using namespace std::literals::string_view_literals;
+using namespace std::literals::string_literals;
+
+const std::string FILE_LOCATION_AUDIO = "AUDIO\\"s;
+const std::string FILE_LOCATION_SOUNDBANK = "AUDIO\\__SF2__\\"s;
+const std::string FILE_EXTENSION_MID = ".mid"s;
+const std::string FILE_EXTENSION_SF2 = ".sf2"s;
 
 void showOscilloscope(ARCAudioStream& stream, const u32& buffer_size);
 
@@ -23,8 +30,11 @@ inline void playStream(ARCAudioStream& stream, const u32& buffer_size, const boo
 
 	stream.stop();
 
+	// Wait for clean-up to complete
 	while (stream.getStatus() == ARCAudioStream::Playing)
+	{
 		sf::sleep(sf::seconds(0.1f));
+	}
 }
 
 void ARCAudioStream::playKeyboard(Soundfont* sf2, const bool& oscilloscope)
@@ -36,19 +46,19 @@ void ARCAudioStream::playKeyboard(Soundfont* sf2, const bool& oscilloscope)
 	if (sf2 != nullptr)
 		controller.apply(sf2->getSoundbanks());
 
-	controller.getChannels()[0].audio_driver = SoundDriver::sampleFM;
-	controller.getChannels()[0].output = squareWave50;
+	controller.setChannel(0, new FMSingleStreamChannel(FMSynth::squareWave50));
 	for (int i = 0; i < 16; i++)
-		controller.set( i + 1, STATUS_CHANNEL_BANK_CHANGE, i, 0 );
+	{
+		controller.set(i + 1, STATUS_CHANNEL_BANK_CHANGE, i, 0);
+	}
 
 	playStream(stream, buffer_size, oscilloscope);
 }
 
 void ARCAudioStream::playFrom(const char* filename, Soundfont* sf2, const bool& oscilloscope)
 {
-	const char* midArr[3] = { FILE_LOCATION_AUDIO, filename, FILE_EXTENSION_MID };
-	const char* mid_filename = arc::concat(midArr, 3);
-	MidiSequence seq(mid_filename);
+	const std::string filepath = FILE_LOCATION_AUDIO + filename + FILE_EXTENSION_MID;
+	MidiSequence seq(filepath.c_str());
 
 	if (!seq.isValid()) return;
 
@@ -59,35 +69,48 @@ void ARCAudioStream::playFrom(const char* filename, Soundfont* sf2, const bool& 
 
 	if (sf2 != nullptr)
 		controller.apply(sf2->getSoundbanks());
+	else
+	{
+		for (u32 i = 0; i < 16; i++)
+		{
+			if (i == 8 || i == 9)	controller.setChannel(i, new FMSingleStreamChannel(FMSynth::noise));
+			else		controller.setChannel(i, new FMSingleStreamChannel(FMSynth::sudoWave));
+		}
+	}
 
 	playStream(stream, buffer_size, oscilloscope);
 }
 
 void ARCAudioStream::playFile(const char* filename, const bool& sampled, const bool& oscilloscope)
 {
-	const char* midArr[3] = { FILE_LOCATION_AUDIO, filename, FILE_EXTENSION_MID };
-	const char* mid_filename = arc::concat(midArr, 3);
-	MidiSequence seq(mid_filename);
-	Soundfont* soundfont = nullptr;
+	const u32 buffer_size = CD_SAMPLE_RATE / 60;
+	const std::string midipath = FILE_LOCATION_AUDIO + filename + FILE_EXTENSION_MID;
 
-	u32 buffer_size = CD_SAMPLE_RATE / 60;
-
+	MidiSequence seq(midipath.c_str());
 	MidiSequencer controller(seq);
 	ARCAudioStream stream( &controller, buffer_size * 2 ); // chunk size and num of channels
 
 	if (sampled)
 	{
-		const char* sf2Arr[3] = { FILE_LOCATION_SOUNDBANK, filename, FILE_EXTENSION_SF2 };
-		const char* sf2_filename = arc::concat(sf2Arr, 3);
-		soundfont = new Soundfont(sf2_filename);
+		const std::string sf2path = FILE_LOCATION_SOUNDBANK + filename + FILE_EXTENSION_SF2;
+		Soundfont* soundfont = new Soundfont(sf2path.c_str());
 
 		if (!soundfont->isValid()) return;
 		controller.apply(soundfont->getSoundbanks());
+
+		playStream(stream, buffer_size, oscilloscope);
+		delete soundfont;
 	}
+	else
+	{
+		for (u32 i = 0; i < 16; i++)
+		{
+			if(i == 9)	controller.setChannel(i, new FMSingleStreamChannel(FMSynth::noise));
+			else		controller.setChannel(i, new FMSingleStreamChannel(FMSynth::sudoWave));
+		}
 
-	playStream(stream, buffer_size, oscilloscope);
-
-	if (soundfont != nullptr) delete soundfont;
+		playStream(stream, buffer_size, oscilloscope);
+	}
 }
 
 void drawBuffer(const sample* buffer, const u32& buffer_size, u32* frame, const u32 width, const u32 height, const u32& scanline)

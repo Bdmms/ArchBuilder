@@ -53,8 +53,6 @@ public:
 
 	bool onGetData(Chunk& data) override
 	{
-		SoundChannel* channels = controller->getChannels();
-
 		for (u32 i = 0; i < chunk_size; i += 2)
 		{
 			controller->tick();
@@ -62,12 +60,12 @@ public:
 			buffer[i + 1] = 0;
 			for (u32 c = 0; c < num_channels; c++)
 			{
-				SoundChannel& channel = channels[c];
-				channel.audio_driver(channels + c);
+				SoundChannel& stream = controller->getChannel(c);
+				stream.tick();
 
 				sample* cbuffer = channel_buffer[c] + i;
-				*(cbuffer++) = channel.left_sample;
-				*(cbuffer--) = channel.right_sample;
+				*(cbuffer++) = stream.left_sample;
+				*(cbuffer--) = stream.right_sample;
 
 				buffer[i    ] += (short)(*(cbuffer++) * per_channel_volume);
 				buffer[i + 1] += (short)(*(cbuffer--) * per_channel_volume);

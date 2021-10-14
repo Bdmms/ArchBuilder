@@ -160,7 +160,8 @@ public:
 			for (size_t j = sz; j < 14; j++)
 				std::cout << " ";
 
-			std::cout << "|  " << arc::toHex(map[i]->getAddress(), bits) << "  |  " << std::dec;
+			char buffer[arc::HEX_BUFFER_SIZE];
+			std::cout << "|  " << arc::toHex(buffer, map[i]->getAddress(), bits) << "  |  " << std::dec;
 
 			if (map[i]->getCapacity() >= 1048576)
 				std::cout << (map[i]->getCapacity() / 1048576) << " MB";
@@ -169,7 +170,7 @@ public:
 			else
 				std::cout << map[i]->getCapacity() << " B";
 
-			std::cout << "		|  " << arc::toHex(map[i]->cs_mask, bits) << std::endl;
+			std::cout << "		|  " << arc::toHex(buffer, map[i]->cs_mask, bits) << std::endl;
 		}
 	}
 

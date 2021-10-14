@@ -4,7 +4,8 @@
 #define AUDIO_SEQUENCER_H
 
 #include "MIDI.h"
-#include "AudioChannel.h"
+#include "SF2.h"
+#include "AudioDriver.h"
 
 constexpr u8 C1 = 4;
 constexpr u8 C2 = 16;
@@ -65,19 +66,6 @@ enum MidiMeta
 	META_SEQUENCER_SPECIFIC = 0x7F
 };
 
-// Copy of channel with modifiers stored for later use
-struct ChannelData
-{
-	Instrument* inst = nullptr;
-
-	smpl_time freq = FREQ_HIGH;
-	smpl_time freq_mod = FREQ_HIGH;
-	smpl_time initial_offset = FREQ_OFF;
-
-	sample volume = SAMPLE_MAX;
-	sample vol_mod = SAMPLE_MAX;
-};
-
 struct Track
 {
 	const MidiTrack& track;
@@ -106,7 +94,9 @@ class Controller
 public:
 	bool paused = false;
 
-	virtual SoundChannel* getChannels() = 0;
+	virtual void setChannel(const u32 i, SoundChannel* channel) = 0;
+	virtual SoundChannel& getChannel(const u32 i) = 0;
+
 	virtual u32 numChannels() = 0;
 	virtual void reset() = 0;
 	virtual void tick() = 0;
@@ -119,11 +109,8 @@ public:
 class MidiController : public Controller
 {
 protected:
-	ChannelData data[MIDI_NUM_CHANNELS];
-	SoundChannel channels[MIDI_NUM_CHANNELS];
+	SoundChannel* channels[MIDI_NUM_CHANNELS];
 	Soundbank* soundbank = nullptr;
-	sample_float lookup_frequency[128];
-
 	float tick_frequency = 1.0f;
 	float tick_offset = 0.0f;
 	u64 sequence_offset = 0;
@@ -131,53 +118,37 @@ protected:
 	u8 selected_bank = 0;
 
 public:
-	MidiController() : lookup_frequency()
+	MidiController() : channels()
 	{
-		for (int i = 0; i < 128; i++)
+		for (u32 i = 0; i < MIDI_NUM_CHANNELS; i++)
 		{
-			int shift = i - 49; // -61
-			double frequency = pow(2.0, sample_float(shift) / 12) * 440.0;
-			lookup_frequency[i] = sample_float(frequency) / sample_float(CD_SAMPLE_RATE);
-			//lookup_frequency[i] = 1.0f;
+			channels[i] = new FMSingleStreamChannel();
 		}
 	}
 
 	bool handleEvent(const MidiEvent& event);
 	
-	virtual SoundChannel* getChannels() override { return channels; }
+	virtual void setChannel(const u32 i, SoundChannel* channel)
+	{
+		delete channels[i];
+		channels[i] = channel;
+	}
+
+	virtual SoundChannel& getChannel(const u32 i) override { return *(channels[i]); }
 	virtual u32 numChannels() override { return MIDI_NUM_CHANNELS; }
 	virtual void setTick(const u64 tick) override {}
 	virtual void skip(u64 ticks) override {}
 
 	constexpr void apply(Soundbank* sounds) { soundbank = sounds; }
 
-	constexpr smpl_time bindTone(SoundChannel& channel, ChannelData& data, const u8 tone)
-	{
-		if (data.inst == nullptr) return FREQ_HIGH;
-
-		FilteredSample* smpl_ptr = data.inst->getSample(tone);
-
-		if (smpl_ptr == nullptr)
-		{
-			std::cout << "Missing tone binded!" << std::endl;
-			return FREQ_HIGH;
-		}
-
-		channel.loop_sample = smpl_ptr;
-		const SHDRChunk* shdr = smpl_ptr->shdr;
-
-		sample_float ratio_sample_length = (sample_float)smpl_ptr->length * lookup_frequency[shdr->byOriginalPitch - PITCH_SHIFT];
-		sample_float ratio_sample_rate = (sample_float)shdr->dwSampleRate / CD_SAMPLE_RATE;
-		data.initial_offset = smpl_ptr->initial_offset;
-		return (ratio_sample_rate / ratio_sample_length) * pow(CENT, (float)shdr->chPitchCorrection);
-	}
-
 	virtual void tick() override { }
 
 	virtual void reset() override
 	{
 		for (u32 i = 0; i < MIDI_NUM_CHANNELS; i++)
-			SoundDriver::stop(channels[i]);
+		{
+			channels[i]->stop();
+		}
 	}
 
 	virtual void set(const u8 channel, const u8 state, const u8 tone, const u8 volume) override
@@ -251,7 +222,9 @@ public:
 		for (u32 s = 0; s < sequencers.size(); s++)
 		{
 			for (u32 i = 0; i < MIDI_NUM_CHANNELS; i++)
-				SoundDriver::stop(channels[i]);
+			{
+				channels[i]->stop();
+			}
 
 			sequencers[s].eventID = 0;
 			sequencers[s].ended = false;

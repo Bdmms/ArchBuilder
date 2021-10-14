@@ -102,15 +102,15 @@ public:
 
 	inline void printDescription() 
 	{
-		const char* opMsk = arc::toHex(instructions->getOpCodeMask(), bits);
-		const char* sfMsk = arc::toHex(instructions->getSuffixMask(), bits);
+		char opMsk[arc::HEX_BUFFER_SIZE];
+		char sfMsk[arc::HEX_BUFFER_SIZE];
 		std::cout << "--- " << getName() << " ---\n";
 		std::cout << "   ARCHITECTURE: " << instructions->getName() << " (" << (int)bits << "-bit)" << std::endl;
-		std::cout << "PROCESSOR SPEED: " << 1.0f / ((double)clock_time / 1000) << " MHz\n";
+		std::cout << "PROCESSOR SPEED: " << 1.0 / ((double)clock_time / 1000.0) << " MHz\n";
 		std::cout << "  NUM REGISTERS: " << num_reg << std::endl;
 		std::cout << "NUM INSTRCTIONS: " << instructions->size() << std::endl;
-		std::cout << "    OPCODE MASK: " << opMsk << std::endl;
-		std::cout << "COND FIELD MASK: " << sfMsk << std::endl;
+		std::cout << "    OPCODE MASK: " << arc::toHex(opMsk, instructions->getOpCodeMask(), bits) << std::endl;
+		std::cout << "COND FIELD MASK: " << arc::toHex(sfMsk, instructions->getSuffixMask(), bits) << std::endl;
 	}
 
 	virtual const char* getName() = 0;

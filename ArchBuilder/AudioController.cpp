@@ -3,30 +3,17 @@
 bool MidiController::handleEvent(const MidiEvent& event)
 {
 	u8 chan = event.status & 0x0F;
-	SoundChannel& channel = channels[chan];
-	ChannelData& cdata = data[chan];
+	SoundChannel* stream = channels[chan];
 
 	switch (event.status & 0xF0)
 	{
 	case STATUS_CHANNEL_OFF:
-		SoundDriver::stop(channel);
+		stream->stop(event.message[MESSAGE_TONE]);
 		break;
 
 	case STATUS_CHANNEL_ON:
-	{
-		// PITCH SHIFT
-		smpl_time pitchCorrectness = bindTone(channel, cdata, event.message[MESSAGE_TONE]);
-
-		cdata.freq = lookup_frequency[event.message[MESSAGE_TONE]] * pitchCorrectness;
-		cdata.volume = (sample)event.message[MESSAGE_VOLUME] / 0x7F;
-
-		channel.frequency = cdata.freq * cdata.freq_mod;
-		channel.volume = cdata.volume * cdata.vol_mod;
-		channel.sample_offset = cdata.initial_offset;
-
-		SoundDriver::start(channel);
+		stream->start(event.message[MESSAGE_TONE], (sample)event.message[MESSAGE_VOLUME] / 0x7F);
 		break;
-	}
 
 	case STATUS_NOTE_AFTERTOUCH:
 		break;
@@ -40,11 +27,10 @@ bool MidiController::handleEvent(const MidiEvent& event)
 		case CONTROLLER_CHANNEL_MODULATION: break;
 		case CONTROLLER_CHANNEL_DATA_ENTRY_MSB: break;
 		case CONTROLLER_CHANNEL_VOLUME: 
-			cdata.vol_mod = (sample)event.message[1] / 0x7F;
-			channel.volume = cdata.volume * cdata.vol_mod;
+			stream->setVolume((sample)event.message[1] / 0x7F);
 			break;
 		case CONTROLLER_CHANNEL_PAN: 
-			channel.stereo_pan = ((sample)event.message[1] / 0x7F) - DEFAULT_PAN; 
+			stream->setPanning(((sample)event.message[1] / 0x7F) - DEFAULT_PAN);
 			break;
 		case CONTROLLER_CHANNEL_DATA_ENTRY_LSB: break;
 		case CONTROLLER_NON_REGISTERED_PARAM_LSB: break;
@@ -56,7 +42,7 @@ bool MidiController::handleEvent(const MidiEvent& event)
 		break;
 
 	case STATUS_CHANNEL_BANK_CHANGE:
-		SoundDriver::stop(channel);
+		stream->stop();
 		if (soundbank != nullptr)
 		{
 			if (soundbank[selected_bank][event.message[0]].sample == nullptr)
@@ -65,9 +51,7 @@ bool MidiController::handleEvent(const MidiEvent& event)
 				return false;
 			}
 
-			data[chan].inst = &soundbank[selected_bank][event.message[0]];
-			channel.loop_sample = nullptr;
-			channel.audio_driver = SoundDriver::sampleSF;
+			setChannel(chan, new SFMultiStreamChannel(soundbank[selected_bank][event.message[0]]));
 		}
 		break;
 
@@ -75,8 +59,8 @@ bool MidiController::handleEvent(const MidiEvent& event)
 		break;
 
 	case STATUS_CHANNEL_PITCHBEND:
-		cdata.freq_mod = pow(2.0f, 1.0f * ((int)((event.message[0] & 0x7F) | ((event.message[1] & 0x7F) << 7)) - 8192) / 49152.0f);
-		channel.frequency = cdata.freq * cdata.freq_mod;
+		stream->setPitchBend(pow(2.0f, 1.0f * ((int)((event.message[0] & 0x7F) | ((event.message[1] & 0x7F) << 7)) - 8192) / (49152.0f / 6.0f) ));
+		//stream->setPitchBend( pow(2.0f, 1.0f * ((int)((event.message[0] & 0x7F) | ((event.message[1] & 0x7F) << 7)) - 8192) / 49152.0f) );
 		break;
 
 	case STATUS_SYSTEM_EXCLUSIVE:
